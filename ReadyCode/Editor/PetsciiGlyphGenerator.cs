@@ -15,6 +15,18 @@ namespace ReadyCode.Editor;
 /// </summary>
 public class PetsciiGlyphGenerator : VisualLineElementGenerator
 {
+    #region Public Properties
+
+    /// <summary>
+    /// Gets or sets whether the active document is assembly source rather than a BASIC listing.
+    /// Assembly source is plain text (mnemonics, labels, comments) and must never be reinterpreted
+    /// as PETSCII bytes, so substitution is skipped entirely - mirroring the printer's
+    /// <c>isAsm ? line : MapPetsciiGlyphs(line)</c> passthrough in SourcePrinter.
+    /// </summary>
+    public bool IsAsmMode { get; set; }
+
+    #endregion
+
     #region Public Methods
 
     /// <summary>
@@ -24,15 +36,19 @@ public class PetsciiGlyphGenerator : VisualLineElementGenerator
     /// <returns>The offset of the next character to substitute, or -1 if none remain on the line.</returns>
     public override int GetFirstInterestedOffset(int startOffset)
     {
+        if (IsAsmMode)
+            return -1;
+
         var document = CurrentContext.Document;
         int endOffset = CurrentContext.VisualLine.LastDocumentLine.EndOffset;
 
         for (int i = startOffset; i < endOffset; i++)
         {
             char c = document.GetCharAt(i);
-            // Also intercept '^' (0x5E): PETSCII maps it to screen code 0x1E (↑ up-arrow),
-            // the C64 power operator, but the font renders 0x5E as a standard caret.
-            if (c < 0x20 || c > 0x7E || c == '^')
+            // PETSCII graphics diverge from ASCII starting at $5C (£, not \) and again from
+            // $5E through $7E (↑, ←, and the full graphics block), even though those code
+            // points fall inside the otherwise-identical printable ASCII range.
+            if (c < 0x20 || c > 0x7E || c == 0x5C || c >= 0x5E)
                 return i;
         }
 

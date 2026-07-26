@@ -72,6 +72,7 @@ public partial class MainWindow : Window
     private readonly AsmLabelColorizer _asmLabelColorizer = new();
     private readonly AsmCommentColorizer _asmCommentColorizer = new();
     private readonly AsmLineNumberMargin _asmLineNumberMargin = new();
+    private readonly PetsciiGlyphGenerator _petsciiGlyphGenerator = new();
     private List<(int Offset, int Length)> _findMatches = new();
     private int _findMatchIndex = -1;
     private CurrentLineBorderRenderer _currentLineBorderRenderer = null!;
@@ -241,7 +242,7 @@ public partial class MainWindow : Window
         // AvalonEdit's built-in control-character boxes (e.g. "DC1", "GS") would otherwise
         // render before our generator gets a chance to show the actual C64 ROM glyph
         Editor.Options.ShowBoxForControlCharacters = false;
-        Editor.TextArea.TextView.ElementGenerators.Add(new PetsciiGlyphGenerator());
+        Editor.TextArea.TextView.ElementGenerators.Add(_petsciiGlyphGenerator);
         Editor.TextArea.TextView.ElementGenerators.Add(new LineSpacingElementGenerator { ExtraSpacing = 4 });
         _ghostRenderer = new GhostTextRenderer(Editor.TextArea);
         // AdornerLayer and PETSCII table both need the visual tree to be ready.
@@ -1319,6 +1320,8 @@ public partial class MainWindow : Window
         Editor.FontFamily = language == EditorLanguage.Asm ? _asmEditorFont : _basicEditorFont;
 
         bool isAsm = language == EditorLanguage.Asm;
+        _petsciiGlyphGenerator.IsAsmMode = isAsm;
+        Editor.TextArea.TextView.Redraw();
         VariablesPanel.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
         SymbolsPanel.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
 
