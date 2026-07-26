@@ -239,7 +239,7 @@ public class CodeMinifierTests
         string input = "600 REM label\n605 PRINT A\n840 IF C=0 GOTO 600";
         string removed    = CodeMinifier.RemoveComments(input);
         string renumbered = CodeMinifier.RenumberLines(removed);
-        Assert.Equal("1 PRINT A\n2 IF C=0 GOTO 1", renumbered);
+        Assert.Equal("0 PRINT A\n1 IF C=0 GOTO 0", renumbered);
     }
 
     // ── SimplifyNextStatements ────────────────────────────────────────────────
@@ -284,30 +284,30 @@ public class CodeMinifierTests
     // ── RenumberLines ─────────────────────────────────────────────────────────
 
     [Fact]
-    public void RenumberLines_NumbersSequentiallyFrom1()
+    public void RenumberLines_NumbersSequentiallyFrom0()
     {
         string input = "10 PRINT \"HI\"\n20 END";
-        Assert.Equal("1 PRINT \"HI\"\n2 END", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 PRINT \"HI\"\n1 END", CodeMinifier.RenumberLines(input));
     }
 
     [Fact]
     public void RenumberLines_UpdatesGotoTarget()
     {
         string input = "100 GOTO 200\n200 END";
-        Assert.Equal("1 GOTO 2\n2 END", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 GOTO 1\n1 END", CodeMinifier.RenumberLines(input));
     }
 
     [Fact]
     public void RenumberLines_UpdatesGosubTarget()
     {
         string input = "10 GOSUB 100\n20 END\n100 PRINT A\n110 RETURN";
-        Assert.Equal("1 GOSUB 3\n2 END\n3 PRINT A\n4 RETURN", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 GOSUB 2\n1 END\n2 PRINT A\n3 RETURN", CodeMinifier.RenumberLines(input));
     }
 
     [Fact]
     public void RenumberLines_UpdatesThenTarget()
     {
-        Assert.Equal("1 IF X>5 THEN 2\n2 END\n3 PRINT \"YES\"",
+        Assert.Equal("0 IF X>5 THEN 1\n1 END\n2 PRINT \"YES\"",
             CodeMinifier.RenumberLines("10 IF X>5 THEN 20\n20 END\n30 PRINT \"YES\""));
     }
 
@@ -315,21 +315,21 @@ public class CodeMinifierTests
     public void RenumberLines_UpdatesOnGotoTargets()
     {
         string input = "10 ON X GOTO 100,200,300\n100 PRINT 1\n200 PRINT 2\n300 PRINT 3";
-        Assert.Equal("1 ON X GOTO 2,3,4\n2 PRINT 1\n3 PRINT 2\n4 PRINT 3", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 ON X GOTO 1,2,3\n1 PRINT 1\n2 PRINT 2\n3 PRINT 3", CodeMinifier.RenumberLines(input));
     }
 
     [Fact]
     public void RenumberLines_RemovesZeroPadding()
     {
         string input = "0010 PRINT \"HI\"\n0020 END";
-        Assert.Equal("1 PRINT \"HI\"\n2 END", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 PRINT \"HI\"\n1 END", CodeMinifier.RenumberLines(input));
     }
 
     [Fact]
     public void RenumberLines_SkipsBlankLines()
     {
         string input = "10 PRINT A\n\n20 END";
-        Assert.Equal("1 PRINT A\n2 END", CodeMinifier.RenumberLines(input));
+        Assert.Equal("0 PRINT A\n1 END", CodeMinifier.RenumberLines(input));
     }
 
     // ── DATA statement protection ─────────────────────────────────────────────
@@ -438,7 +438,7 @@ public class CodeMinifierTests
             simplifyNextStatements: true,
             renumberLines: true);
         // REM line removed, 0.5→.5, NEXT I→NEXT, renumbered, all spaces stripped last
-        Assert.Equal("1X=.5\n2NEXT\n3GOTO1", result);
+        Assert.Equal("0X=.5\n1NEXT\n2GOTO0", result);
     }
 
     [Fact]

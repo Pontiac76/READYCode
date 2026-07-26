@@ -178,7 +178,7 @@ public static class CodeMinifier
     }
 
     /// <summary>
-    /// Renumbers all BASIC line numbers sequentially starting at 1, updating any
+    /// Renumbers all BASIC line numbers sequentially starting at 0, updating any
     /// GOTO/GOSUB/THEN/RESTORE/RUN references to match.
     /// </summary>
     public static string RenumberLines(string source)
@@ -192,10 +192,10 @@ public static class CodeMinifier
                 numbered.Add((n, code));
         }
 
-        // Build old→new mapping; new numbers start at 1
+        // Build old→new mapping; new numbers start at 0
         var mapping = new Dictionary<int, int>(numbered.Count);
         for (int i = 0; i < numbered.Count; i++)
-            mapping[numbered[i].oldNum] = i + 1;
+            mapping[numbered[i].oldNum] = i;
 
         var result = new List<string>(numbered.Count);
         foreach (var (oldNum, code) in numbered)
