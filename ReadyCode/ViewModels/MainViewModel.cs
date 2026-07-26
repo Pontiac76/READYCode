@@ -85,6 +85,7 @@ public class MainViewModel : INotifyPropertyChanged
         ViceSystemInfoCommand = new RelayCommand(async _ => await ShowViceSystemInfoAsync());
 
         HelpGitHubCommand = new RelayCommand(_ => OpenGitHubRepo());
+        HelpDocsCommand = new RelayCommand(_ => OpenDocs());
         HelpAboutCommand = new RelayCommand(_ => ShowAboutDialog());
     }
 
@@ -605,6 +606,11 @@ public class MainViewModel : INotifyPropertyChanged
     public ICommand HelpGitHubCommand { get; }
 
     /// <summary>
+    /// Gets the command that opens the READYCode online documentation in the default browser.
+    /// </summary>
+    public ICommand HelpDocsCommand { get; }
+
+    /// <summary>
     /// Gets the command that shows the About dialog.
     /// </summary>
     public ICommand HelpAboutCommand { get; }
@@ -926,6 +932,12 @@ public class MainViewModel : INotifyPropertyChanged
     private void OpenGitHubRepo()
     {
         Process.Start(new ProcessStartInfo(Settings.GitHubUrl) { UseShellExecute = true });
+    }
+
+    // Opens the READYCode online documentation in the user's default browser.
+    private void OpenDocs()
+    {
+        Process.Start(new ProcessStartInfo(Settings.DocsUrl) { UseShellExecute = true });
     }
 
     // Shows the About dialog with application information.

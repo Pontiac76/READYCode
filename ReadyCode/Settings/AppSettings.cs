@@ -220,6 +220,11 @@ public class AppSettings
     public string GitHubUrl { get; set; } = "https://github.com/jbramwell/READYCode";
 
     /// <summary>
+    /// URL of the READYCode online documentation, opened by Help &gt; View Online Docs.
+    /// </summary>
+    public string DocsUrl { get; set; } = "https://github.com/jbramwell/READYCode/blob/main/docs/README.md";
+
+    /// <summary>
     /// When true, code will be automatically minified (unnecessary whitespace
     /// removed, etc.) when transferred to the Commodore 64 Ultimate.
     /// </summary>
