@@ -1,10 +1,10 @@
 <div align="center">
-  <img src="ReadyCode/Assets/READYCode-Open Graph (1280x640).png" alt="READYCode Logo" width="600" />
+  <img src="images/READYCode-Home-Screen.png" alt="READYCode Logo" width="600" />
 </div>
 
 # READYCode
 
-A Windows desktop code editor for writing Commodore 64 BASIC programs, built around the Commodore 64 Ultimate's local network API. READYCode lets you write BASIC in a modern editor - with C64-accurate PETSCII rendering, syntax highlighting, keyword completion, and line-number tooling - then tokenize it to a real .prg and either save it to disk (for VICE or any other C64 emulator) or push it straight to a C64 Ultimate or VICE emulator over the network and run it immediately. Beyond writing code, READYCode can also browse and manage the C64 Ultimate's own storage over FTP - including looking inside `.d64` disk images and opening the BASIC programs stored on them - right alongside your local project files.
+A Windows 10/11 desktop code editor for writing Commodore 64 BASIC and 6502 assembly programs, built around the [Commodore 64 Ultimate](https://commodore.net/computer/)'s local [network API](https://1541u-documentation.readthedocs.io/en/latest/api/api_calls.html). READYCode brings both languages into a modern editor - C64-accurate PETSCII rendering, syntax highlighting, keyword completion, and line-number tooling for BASIC, plus mnemonic highlighting and a built-in assembler for 6502 - then produces a real .prg you can save to disk (for VICE or any other C64 emulator) or push straight to a C64 Ultimate or VICE emulator over the network and run immediately. Beyond writing code, READYCode can also browse and manage the C64 Ultimate's own storage over FTP - including looking inside `.d64` disk images and opening the programs stored on them - right alongside your local project files.
 
 ## Why this exists
 
@@ -15,11 +15,37 @@ modern. The editor renders PETSCII control characters using the actual C64 chara
 same mapping the KERNAL uses), so what you see in the editor - and on a printed page - matches what
 the real machine would show.
 
+## Documentation
+
+Full documentation, covering every feature in depth, lives in [docs/](docs/README.md). The summary below is a quick overview; head there for the details.
+
 ## Features
 
 - **BASIC editor** - AvalonEdit-based editor with BASIC keyword highlighting, `REM` comment
   highlighting, line-number-aware editing, a configurable column-wrap guide, and ghost-text keyword
   completion.
+- **BASIC keyword shortcuts** - recognizes the same keyboard abbreviations a real C64 keyboard produces
+  for around fifty BASIC keywords (an unshifted letter or two followed by one shifted letter, inserted
+  as the correct PETSCII graphic), honored everywhere a keyword is recognized: tokenizing, syntax
+  highlighting, and hover tooltips. `PRINT`'s `?` shorthand is recognized the same way.
+- **Diagnostics** - inline squiggle warnings for common mistakes as you type: duplicate line numbers,
+  `GOTO`/`GOSUB`/`THEN` targets that don't exist, and unmatched `FOR`/`NEXT` pairs in BASIC; undefined
+  labels, bad addressing modes, and out-of-range branches in assembly.
+- **Code folding** - collapse `REM` blocks and `FOR`/`NEXT` loops in BASIC, or runs of comment lines in
+  assembly, to cut down on visual noise in longer programs.
+- **Variables / Symbols panel** - lists every variable in a BASIC program, or every label and constant
+  in an assembly program, with click-to-jump navigation to each occurrence and one-step rename (F2).
+- **Reference panels** - BASIC Keywords, ASM Mnemonics, PETSCII Reference, Quick Keys, and Music Notes
+  panels for looking things up without leaving the editor, each with descriptions on hover and
+  click-to-insert where it makes sense.
+- **Assembly editor** - a full 6502 assembly mode alongside BASIC: mnemonic/label/directive
+  highlighting, a built-in two-pass assembler covering all 56 official opcodes and addressing modes,
+  `.org`/`.byte`/`.text`/`.word` directives, and inline diagnostics. Assembling without `.org` produces
+  a directly runnable `.prg` with an auto-generated BASIC loader stub; assembling with `.org` writes a
+  standard load-address header instead.
+- **Hex Editor** - open any file - not just recognized BASIC/assembly/disk-image types - as a raw
+  offset/hex/ASCII grid, with inline byte editing, its own undo/redo history, and full support for
+  files inside a mounted `.d64`/`.d81` disk image.
 - **Accurate PETSCII rendering** - control and high-byte characters are remapped at render time to the
   matching C64 character-ROM glyph (via the embedded "Pet Me 64" font), without altering the
   underlying text, so existing text-based features (tokenizing, search, etc.) keep working unchanged.
@@ -34,6 +60,11 @@ the real machine would show.
   directly in the editor. Enable it on the device under Ultimate menu -> Network Services -> FTP file
   service; READYCode never auto-connects on its own, so nothing happens on the network until you click
   Connect.
+- **VICE integration** - a counterpart to the C64 Ultimate integration for the VICE emulator: READYCode
+  launches and manages the VICE process directly, and talks to its binary monitor protocol over TCP to
+  load and run programs and issue machine controls (reset, reboot, pause, resume, power off) without
+  restarting the emulator each time. The emulator path and monitor host/port are configured once in
+  Preferences, with an option to bring VICE to the foreground automatically when loading or running.
 - **Tokenizing / `.prg` conversion** - converts BASIC source to/from the real tokenized `.prg` binary
   format (including the `$0801` load address), compatible with VICE and other emulators, not just the
   Ultimate. The same converter can also tell a real BASIC program apart from a raw machine-language
@@ -50,11 +81,20 @@ the real machine would show.
   that was opened from inside a mounted disk image writes the edit straight back into it. The C64U
   Explorer's version works the same way over FTP (download, modify, re-upload) as the local Explorer
   does directly on disk.
+- **Find in Files / Replace in Files** - project-wide search across every `.bas`, `.asm`, `.s`, `.txt`,
+  and `.prg` file under an open folder (a `.prg` is decoded to text for matching and re-tokenized on
+  write-back), with match-case, whole-word, and regular-expression options, a results tree grouped by
+  file, and a project-wide Replace All.
 - **Minify / Prettify** - reformat BASIC source for either compactness (token packing, optional line
   renumbering) or readability.
 - **Printing** - Print and Print Preview render the active tab through the same PETSCII-accurate
   font/glyph pipeline as the editor, with a standard Windows Page Setup dialog for margins/orientation.
 - **Themes** - Light, Dark, and a Commodore-64-palette theme, swappable at runtime.
+- **Session and tab management** - restores the tabs you had open (including which ones were in Hex
+  Editor mode) the next time you launch READYCode, keeps a history of recently closed tabs to reopen,
+  and accepts `.prg` files dragged in from Windows Explorer.
+- **Code Statistics** - a dialog showing character/word/line counts for the active document, plus its
+  tokenized (BASIC) or assembled (assembly) byte count.
 - **Import/Export** - read/write plain-text BASIC alongside native `.prg` files.
 
 ## Architecture overview
