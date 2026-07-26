@@ -24,7 +24,7 @@ public class CodePrettifierTests
     [Fact]
     public void AddWhitespace_SpacesKeywordsInCompactCode()
     {
-        Assert.Equal("10 FOR I=1 TO 10", CodePrettifier.AddWhitespace("10FORI=1TO10"));
+        Assert.Equal("10 FOR I = 1 TO 10", CodePrettifier.AddWhitespace("10FORI=1TO10"));
     }
 
     [Fact]
@@ -45,13 +45,13 @@ public class CodePrettifierTests
     public void AddWhitespace_FunctionKeywordNoSpaceBeforeParen()
     {
         // Function keywords (PEEK, LEN, …) must not be followed by a space before '('.
-        Assert.Equal("10 IF PEEK(49152)=1 THEN 20", CodePrettifier.AddWhitespace("10IFPEEK(49152)=1THEN20"));
+        Assert.Equal("10 IF PEEK(49152) = 1 THEN 20", CodePrettifier.AddWhitespace("10IFPEEK(49152)=1THEN20"));
     }
 
     [Fact]
     public void AddWhitespace_HandlesConditional()
     {
-        Assert.Equal("10 IF X>5 AND X<10 THEN 30", CodePrettifier.AddWhitespace("10IFX>5ANDX<10THEN30"));
+        Assert.Equal("10 IF X > 5 AND X < 10 THEN 30", CodePrettifier.AddWhitespace("10IFX>5ANDX<10THEN30"));
     }
 
     [Fact]
@@ -129,6 +129,58 @@ public class CodePrettifierTests
     {
         string input = "10 PRINT \"HELLO\"";
         Assert.Equal(input, CodePrettifier.AddWhitespace(input));
+    }
+
+    // ── AddWhitespace: operator spacing ──────────────────────────────────────
+
+    [Theory]
+    [InlineData("=")]
+    [InlineData("+")]
+    [InlineData("-")]
+    [InlineData("*")]
+    [InlineData("/")]
+    [InlineData("^")]
+    [InlineData("<")]
+    [InlineData(">")]
+    [InlineData("<>")]
+    [InlineData("<=")]
+    [InlineData(">=")]
+    public void AddWhitespace_SpacesBinaryOperator(string op)
+    {
+        Assert.Equal($"10 X {op} Y", CodePrettifier.AddWhitespace($"10X{op}Y"));
+    }
+
+    [Fact]
+    public void AddWhitespace_NoSpaceAfterUnaryMinusOnAssignment()
+    {
+        // "DY=-DY" - the '-' negates DY, it isn't a subtraction.
+        Assert.Equal("10 DY = -DY", CodePrettifier.AddWhitespace("10DY=-DY"));
+    }
+
+    [Fact]
+    public void AddWhitespace_NoSpaceAfterUnaryMinusInParens()
+    {
+        Assert.Equal("10 Y = SGN(-5)", CodePrettifier.AddWhitespace("10Y=SGN(-5)"));
+    }
+
+    [Fact]
+    public void AddWhitespace_NoSpaceAfterUnaryMinusAfterComma()
+    {
+        Assert.Equal("10 PRINT A,-B", CodePrettifier.AddWhitespace("10PRINTA,-B"));
+    }
+
+    [Fact]
+    public void AddWhitespace_SpacesBinaryMinusBetweenOperands()
+    {
+        Assert.Equal("10 X = Y - 5", CodePrettifier.AddWhitespace("10X=Y-5"));
+    }
+
+    [Fact]
+    public void AddWhitespace_BouncingBallExample()
+    {
+        // Regression test from the reported Bouncing Ball easter egg source.
+        Assert.Equal("10 X = X + DX", CodePrettifier.AddWhitespace("10X=X+DX"));
+        Assert.Equal("10 IF X > 255 THEN X = 255:DX = -DX", CodePrettifier.AddWhitespace("10IFX>255THENX=255:DX=-DX"));
     }
 
     // ── ReplacePeriodWithZero ─────────────────────────────────────────────────
@@ -351,7 +403,7 @@ public class CodePrettifierTests
     {
         // Input is lightly minified: compact line numbers, shorthand decimal, E-notation, bare NEXT.
         string input    = "1 FOR I=1 TO 5\n2 PRINT .5\n3 X=1E3\n4 NEXT\n5 GOTO 2";
-        string expected = "10 FOR I=1 TO 5\n20 PRINT 0.5\n30 X=1000\n40 NEXT I\n50 GOTO 20";
+        string expected = "10 FOR I = 1 TO 5\n20 PRINT 0.5\n30 X = 1000\n40 NEXT I\n50 GOTO 20";
         string result   = CodePrettifier.Prettify(input,
             addWhitespace: true, replacePeriodWithZero: true, useStandardNotation: true,
             addNextVariables: true, renumberLines: true,

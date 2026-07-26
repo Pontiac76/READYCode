@@ -128,6 +128,25 @@ public class TokenizerTests
         Assert.Contains("COMMENT", comment.ToUpperInvariant());
     }
 
+    [Fact]
+    public void TokenizeLine_RemPreservesExactlyOneLeadingSpace()
+    {
+        // Regression test: the leading space after REM must not be duplicated - a prior bug
+        // added a second copy of it on every tokenize (Save), growing by one space per round-trip.
+        var bytes = Tokenize("REM LEGO BATMAN");
+        string comment = System.Text.Encoding.ASCII.GetString(bytes[1..]);
+        Assert.Equal(" LEGO BATMAN", comment);
+    }
+
+    [Fact]
+    public void TokenizeLine_RemTokenizeIsIdempotent()
+    {
+        var once = Tokenize("REM LEGO BATMAN");
+        string onceText = "REM" + System.Text.Encoding.ASCII.GetString(once[1..]);
+        var twice = Tokenize(onceText);
+        Assert.Equal(once, twice);
+    }
+
     // ── Keyword abbreviations ────────────────────────────────────────────────
 
     [Fact]

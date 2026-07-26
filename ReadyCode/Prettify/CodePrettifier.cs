@@ -193,7 +193,11 @@ public static class CodePrettifier
     {
         var sb           = new StringBuilder(code.Length + 16);
         int i            = 0;
-        bool prevIsSpace = true; // treat line start as "preceded by space"
+        bool prevIsSpace = true;  // treat line start as "preceded by space"
+        // Tracks whether the last significant thing written is a value (identifier, number,
+        // string, or ')') that a binary operator could apply to. A '-' seen while this is false
+        // is a sign, not subtraction (e.g. "X=-5", "(-5)", "PRINT A,-B") - see the operator branch.
+        bool lastWasOperand = false;
 
         while (i < code.Length)
         {
@@ -206,6 +210,7 @@ public static class CodePrettifier
                 sb.Append(c); i++;
                 while (i < code.Length && code[i] != '"') { sb.Append(code[i++]); }
                 if (i < code.Length) { sb.Append(code[i++]); }
+                lastWasOperand = true;
                 continue;
             }
 
@@ -214,6 +219,34 @@ public static class CodePrettifier
             {
                 sb.Append(c); i++;
                 prevIsSpace = true;
+                lastWasOperand = false;
+                continue;
+            }
+
+            // ── Operators: =, +, -, *, /, ^, <, >, <>, <=, >= ─────────────────
+            // Always spaced on both sides, except a '-' that negates rather than subtracts,
+            // which hugs the value it negates with no space after it.
+            if (IsOperatorChar(c))
+            {
+                string op = MatchOperatorToken(code, i);
+                bool isUnaryMinus = op == "-" && !lastWasOperand;
+
+                if (isUnaryMinus)
+                {
+                    sb.Append(op);
+                    i += op.Length;
+                    prevIsSpace = false;
+                    // lastWasOperand stays false - still expecting the negated operand.
+                }
+                else
+                {
+                    if (!prevIsSpace) sb.Append(' ');
+                    sb.Append(op);
+                    sb.Append(' ');
+                    i += op.Length;
+                    prevIsSpace = true;
+                    lastWasOperand = false;
+                }
                 continue;
             }
 
@@ -239,6 +272,7 @@ public static class CodePrettifier
                 sb.Append(kw.ToUpperInvariant());
                 i += kw.Length;
                 prevIsSpace = false;
+                lastWasOperand = false; // a keyword precedes an expression, never ends one
 
                 // REM: copy rest of line verbatim (it's a comment)
                 if (kw.Equals("REM", StringComparison.OrdinalIgnoreCase))
@@ -278,11 +312,29 @@ public static class CodePrettifier
             {
                 sb.Append(c);
                 prevIsSpace = false;
+                lastWasOperand = char.IsLetterOrDigit(c) || c == '$' || c == '%' || c == ')';
                 i++;
             }
         }
 
         return sb.ToString();
+    }
+
+    // True for the C64 BASIC operator characters: =, +, -, *, /, ^, <, >.
+    private static bool IsOperatorChar(char c) => c is '=' or '+' or '-' or '*' or '/' or '^' or '<' or '>';
+
+    // Matches the operator token at `pos`, preferring the two-character forms <>, <=, >= over
+    // their single-character prefix so they're spaced (and moved past) as one unit.
+    private static string MatchOperatorToken(string code, int pos)
+    {
+        char c = code[pos];
+        char next = pos + 1 < code.Length ? code[pos + 1] : '\0';
+
+        if (c == '<' && next == '>') return "<>";
+        if (c == '<' && next == '=') return "<=";
+        if (c == '>' && next == '=') return ">=";
+
+        return c.ToString();
     }
 
     // Process FOR/NEXT tracking across the statements of a single source line.

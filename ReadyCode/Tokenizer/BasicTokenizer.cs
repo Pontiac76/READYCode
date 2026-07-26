@@ -97,7 +97,10 @@ public class BasicTokenizer
                     {
                         // Preserve a single leading space if present
                         if (pos < line.Length && line[pos] == ' ')
+                        {
                             tokens.Add((byte)' ');
+                            pos++;
+                        }
                         while (pos < line.Length)
                             tokens.Add((byte)line[pos++]);
                     }
