@@ -382,6 +382,22 @@ public class CodeMinifierTests
     }
 
     [Fact]
+    public void RemoveWhitespace_RecognizesDataAbbreviation()
+    {
+        // "Da" is DATA's C64 keyboard shift-abbreviation (D, Shift+A) - must be protected
+        // exactly like the spelled-out keyword, including stripping its own leading spaces.
+        Assert.Equal("10Da1, 2, 3", CodeMinifier.RemoveWhitespace("10 Da    1, 2, 3"));
+    }
+
+    [Fact]
+    public void RemoveWhitespace_IsIdempotentOnAlreadyMinifiedDataAbbreviation()
+    {
+        string oncePassed = CodeMinifier.RemoveWhitespace("10 Da THIS IS A TEST,WITH SPACES");
+        Assert.Equal("10DaTHIS IS A TEST,WITH SPACES", oncePassed);
+        Assert.Equal(oncePassed, CodeMinifier.RemoveWhitespace(oncePassed));
+    }
+
+    [Fact]
     public void Replace0WithPeriod_DoesNotTouchDataStatement()
     {
         Assert.Equal("10 DATA 0.5,0.25", CodeMinifier.Replace0WithPeriod("10 DATA 0.5,0.25"));

@@ -2077,7 +2077,8 @@ public partial class MainWindow : Window
 
             if (char.IsLetter(c))
             {
-                if (!BasicTokens.TryMatchKeyword(lineText, i, BasicTokens.WordKeywordsLongestFirst, out string keyword))
+                if (!BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+                    lineText, i, BasicTokens.WordKeywordsLongestFirst, out string keyword, out int matchedLength))
                 { i++; continue; }
 
                 if (string.Equals(keyword, "REM", StringComparison.OrdinalIgnoreCase))
@@ -2089,7 +2090,7 @@ public partial class MainWindow : Window
                     string.Equals(keyword, "THEN",  StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(keyword, "GOSUB", StringComparison.OrdinalIgnoreCase);
 
-                i += keyword.Length;
+                i += matchedLength;
                 if (!isTarget) continue;
 
                 while (true)
@@ -5489,15 +5490,30 @@ public partial class MainWindow : Window
                 continue;
             }
 
+            // "?" is PRINT's literal shorthand (see BasicTokenizer.TryMatchKeywordOrAbbreviation).
+            if (c == '?')
+            {
+                if (rawStart >= 0 && TryClassifyRawRun(lineText, rawStart, i, col, inDataArgs, out tooltipText))
+                    return true;
+                rawStart = -1;
+
+                if (col == i)
+                    return TryGetKeywordTooltip("PRINT", out tooltipText);
+
+                i++;
+                continue;
+            }
+
             if (char.IsLetter(c))
             {
-                if (BasicTokens.TryMatchKeyword(lineText, i, BasicTokens.WordKeywordsLongestFirst, out string keyword))
+                if (BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+                    lineText, i, BasicTokens.WordKeywordsLongestFirst, out string keyword, out int matchedLength))
                 {
                     if (rawStart >= 0 && TryClassifyRawRun(lineText, rawStart, i, col, inDataArgs, out tooltipText))
                         return true;
                     rawStart = -1;
 
-                    if (col >= i && col < i + keyword.Length)
+                    if (col >= i && col < i + matchedLength)
                         return TryGetKeywordTooltip(keyword, out tooltipText);
 
                     if (string.Equals(keyword, "REM", StringComparison.OrdinalIgnoreCase))
@@ -5505,7 +5521,7 @@ public partial class MainWindow : Window
                     if (string.Equals(keyword, "DATA", StringComparison.OrdinalIgnoreCase))
                         inDataArgs = true;
 
-                    i += keyword.Length;
+                    i += matchedLength;
                     continue;
                 }
 
@@ -5820,13 +5836,13 @@ public partial class MainWindow : Window
 
         e.Handled = true;
 
-        string upperText = e.Text.ToUpperInvariant();
+        string insertText = TryGetKeywordAbbreviationGlyph(e.Text) ?? e.Text.ToUpperInvariant();
         int start = Editor.SelectionStart;
         int length = Editor.SelectionLength;
 
-        Editor.Document.Replace(start, length, upperText);
+        Editor.Document.Replace(start, length, insertText);
 
-        int caretOffset = start + upperText.Length;
+        int caretOffset = start + insertText.Length;
         Editor.CaretOffset = caretOffset;
         Editor.Select(caretOffset, 0);
 
@@ -5840,6 +5856,45 @@ public partial class MainWindow : Window
             else
                 _completionWindow.CompletionList.SelectItem(word);
         }
+    }
+
+    // Recognizes a C64 BASIC keyword shift-abbreviation as it's typed: an unshifted letter prefix
+    // already sitting in the document (forced upper case by the caller) immediately followed by
+    // one shifted letter - exactly the CRUNCH routine's keyboard shortcut for that keyword (see
+    // BasicKeywordAbbreviations). Shift is detected from the raw case of `text`, since typing an
+    // unshifted letter always yields lower case and a shifted one upper case, regardless of the
+    // caller's own upper-casing of the character actually inserted. Returns the PETSCII graphic
+    // character for the shifted letter (its byte value equals the letter's lower case ASCII code -
+    // see PetsciiScreenCodeMap) so the abbreviation is inserted and rendered with its correct C64
+    // glyph instead of expanding to the keyword's full spelling, or null if `text` doesn't
+    // complete a recognized abbreviation at the caret.
+    private string? TryGetKeywordAbbreviationGlyph(string text)
+    {
+        if (Editor.SelectionLength > 0) return null;
+        if (text.Length != 1 || !char.IsAsciiLetterUpper(text[0])) return null;
+
+        var document = Editor.Document;
+        var line = document.GetLineByOffset(Editor.CaretOffset);
+        int caretCol = Editor.CaretOffset - line.Offset;
+        string lineText = document.GetText(line);
+
+        // Never inside a string literal - a shifted keystroke there is raw PETSCII content being
+        // typed directly, not a keyword abbreviation (the tokenizer never keyword-scans strings).
+        bool inString = false;
+        for (int i = 0; i < caretCol; i++)
+            if (lineText[i] == '"') inString = !inString;
+        if (inString) return null;
+
+        char shiftedLower = char.ToLowerInvariant(text[0]);
+        int prefixAvailable = Math.Min(caretCol, BasicKeywordAbbreviations.MaxLength - 1);
+        for (int prefixLen = prefixAvailable; prefixLen >= 0; prefixLen--)
+        {
+            string candidate = lineText.Substring(caretCol - prefixLen, prefixLen) + shiftedLower;
+            if (BasicKeywordAbbreviations.ToKeyword.ContainsKey(candidate))
+                return shiftedLower.ToString();
+        }
+
+        return null;
     }
 
     private void Editor_Pasting(object sender, DataObjectPastingEventArgs e)

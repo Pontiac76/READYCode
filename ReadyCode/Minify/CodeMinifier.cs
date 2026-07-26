@@ -253,25 +253,29 @@ public static class CodeMinifier
         return idx < 0 ? (code, "") : (code[..idx], code[idx..]);
     }
 
-    // Trims the run of spaces immediately after "DATA" (up to the first non-space character),
-    // mirroring the space already dropped between the line number and the first token - C64
-    // BASIC does not require it, and READ skips leading spaces on each data item anyway. Any
-    // other whitespace within the DATA statement is left untouched since it may be
+    // Trims the run of spaces immediately after the DATA keyword - "DATA" spelled out, or its
+    // "Da" shift-abbreviation (see BasicKeywordAbbreviations) - up to the first non-space
+    // character, mirroring the space already dropped between the line number and the first
+    // token - C64 BASIC does not require it, and READ skips leading spaces on each data item
+    // anyway. Any other whitespace within the DATA statement is left untouched since it may be
     // significant (e.g. spaces inside unquoted string data).
     private static string TrimDataLeadingSpace(string dataPart)
     {
         if (dataPart.Length == 0) return dataPart;
-        int i = 4; // length of "DATA"
+        int keywordLength = dataPart.Length >= 4 &&
+            dataPart.AsSpan(0, 4).Equals("DATA", StringComparison.OrdinalIgnoreCase) ? 4 : 2; // "DATA" or "Da"
+        int i = keywordLength;
         while (i < dataPart.Length && dataPart[i] == ' ') i++;
-        return dataPart[..4] + dataPart[i..];
+        return dataPart[..keywordLength] + dataPart[i..];
     }
 
-    // Finds the index of a "DATA" keyword outside string literals, or -1 if there isn't one.
-    // No check on the character following "DATA": BasicTokenizer's real CRUNCH-equivalent
-    // keyword scan has no such boundary either (it greedily matches "DATA" wherever it
-    // appears), and minify itself produces exactly that shape - "DATA" glued directly to its
-    // first value once the leading space is trimmed - so requiring a separator there would
-    // make the DATA statement unrecognizable, and thus unprotected, on a second minify pass.
+    // Finds the index of a DATA keyword outside string literals - "DATA" spelled out or its "Da"
+    // shift-abbreviation (see BasicKeywordAbbreviations) - or -1 if there isn't one. No check on
+    // the character following it: BasicTokenizer's real CRUNCH-equivalent keyword scan has no
+    // such boundary either (it greedily matches wherever the keyword appears), and minify itself
+    // produces exactly that shape - the keyword glued directly to its first value once the
+    // leading space is trimmed - so requiring a separator there would make the DATA statement
+    // unrecognizable, and thus unprotected, on a second minify pass.
     private static int FindDataKeywordStart(string code)
     {
         bool inString = false;
@@ -281,7 +285,12 @@ public static class CodeMinifier
             if (c == '"') { inString = !inString; continue; }
             if (inString) continue;
 
-            if (i + 4 <= code.Length && code.AsSpan(i, 4).Equals("DATA", StringComparison.OrdinalIgnoreCase))
+            bool isDataSpelledOut = i + 4 <= code.Length &&
+                code.AsSpan(i, 4).Equals("DATA", StringComparison.OrdinalIgnoreCase);
+            bool isDataAbbreviation = !isDataSpelledOut && i + 2 <= code.Length &&
+                code.AsSpan(i, 2).SequenceEqual("Da");
+
+            if (isDataSpelledOut || isDataAbbreviation)
             {
                 bool precededOk = i == 0 || !char.IsLetterOrDigit(code[i - 1]);
                 if (precededOk) return i;

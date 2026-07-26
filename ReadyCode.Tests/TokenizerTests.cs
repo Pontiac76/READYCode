@@ -128,6 +128,48 @@ public class TokenizerTests
         Assert.Contains("COMMENT", comment.ToUpperInvariant());
     }
 
+    // ── Keyword abbreviations ────────────────────────────────────────────────
+
+    [Fact]
+    public void TokenizeLine_ListAbbreviationIsTokenized()
+    {
+        // "Li" is LIST's shift-abbreviation (L, Shift+I) → LIST = 0x9B
+        var bytes = Tokenize("Li");
+        Assert.Equal(0x9B, bytes[0]);
+    }
+
+    [Fact]
+    public void TokenizeLine_ThreeLetterAbbreviationIsTokenized()
+    {
+        // "CLo" is CLOSE's shift-abbreviation (C, L, Shift+O) → CLOSE = 0xA0
+        var bytes = Tokenize("CLo1");
+        Assert.Equal(0xA0, bytes[0]);
+    }
+
+    [Fact]
+    public void TokenizeLine_ShorterAbbreviationNotConfusedWithLongerOne()
+    {
+        // "St" (STOP) and "STe" (STEP) share a prefix but must resolve to different tokens.
+        Assert.Equal(0x90, Tokenize("St")[0]);  // STOP
+        Assert.Equal(0xA9, Tokenize("STe")[0]); // STEP
+    }
+
+    [Fact]
+    public void TokenizeLine_AbbreviationInsideStringNotTokenized()
+    {
+        // Inside a string, "Li" is just raw text, not the LIST abbreviation.
+        var bytes = Tokenize("PRINT\"Li\"");
+        Assert.Equal((byte)'L', bytes[2]);
+        Assert.Equal((byte)'i', bytes[3]);
+    }
+
+    [Fact]
+    public void TokenizeLine_QuestionMarkIsPrintSynonym()
+    {
+        var bytes = Tokenize("?\"HI\"");
+        Assert.Equal(0x99, bytes[0]); // PRINT
+    }
+
     #endregion
 
     #region Private Methods

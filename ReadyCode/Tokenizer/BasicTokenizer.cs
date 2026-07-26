@@ -83,13 +83,14 @@ public class BasicTokenizer
                     continue;
                 }
 
-                // Greedy keyword scan — mirrors the C64 BASIC CRUNCH routine.
-                // Try every keyword at the current position, keeping the longest match.
-                if (BasicTokens.TryMatchKeyword(line, pos, BasicTokens.AllKeywordsLongestFirst, out string keyword))
+                // Greedy keyword scan — mirrors the C64 BASIC CRUNCH routine, including its
+                // keyboard shift-abbreviations (e.g. "Li" for LIST) and PRINT's "?" synonym.
+                // Try every keyword/abbreviation at the current position, keeping the longest match.
+                if (TryMatchKeywordOrAbbreviation(line, pos, out string keyword, out int matchedLength))
                 {
                     byte token = BasicTokens.TokenMap[keyword];
                     tokens.Add(token);
-                    pos += keyword.Length;
+                    pos += matchedLength;
 
                     // After REM the rest of the line is a comment — copy verbatim.
                     if (token == _remToken)
@@ -131,6 +132,25 @@ public class BasicTokenizer
         foreach (var line in sourceCode.Split(["\r\n", "\r", "\n"], StringSplitOptions.None))
             results.Add(TokenizeLine(line));
         return results;
+    }
+
+    #endregion
+
+    #region Private Methods
+
+    // Recognizes full keyword spellings, their C64 keyboard shift-abbreviations (see
+    // BasicKeywordAbbreviations), and PRINT's "?" synonym at the given position.
+    private static bool TryMatchKeywordOrAbbreviation(string line, int pos, out string keyword, out int matchedLength)
+    {
+        if (line[pos] == '?')
+        {
+            keyword = "PRINT";
+            matchedLength = 1;
+            return true;
+        }
+
+        return BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+            line, pos, BasicTokens.AllKeywordsLongestFirst, out keyword, out matchedLength);
     }
 
     #endregion

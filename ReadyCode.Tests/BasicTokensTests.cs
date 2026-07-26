@@ -125,5 +125,40 @@ public class BasicTokensTests
         Assert.Equal(category, info.Category);
     }
 
+    // ── BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation ─────────────────
+
+    [Fact]
+    public void TryMatchKeywordOrAbbreviation_ResolvesAbbreviationToFullKeyword()
+    {
+        // "Re" is READ's shift-abbreviation (R, Shift+E) - used by both the tokenizer and the
+        // hover-tooltip lookup, so hovering over "Re" must resolve to READ's description.
+        bool found = BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+            "Re A", 0, BasicTokens.WordKeywordsLongestFirst, out string keyword, out int matchedLength);
+        Assert.True(found);
+        Assert.Equal("READ", keyword);
+        Assert.Equal(2, matchedLength);
+    }
+
+    [Fact]
+    public void TryMatchKeywordOrAbbreviation_PrefersFullKeywordWhenLonger()
+    {
+        // "GOTO" (full spelling) must win over any shorter abbreviation match at the same position.
+        bool found = BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+            "GOTO10", 0, BasicTokens.WordKeywordsLongestFirst, out string keyword, out int matchedLength);
+        Assert.True(found);
+        Assert.Equal("GOTO", keyword);
+        Assert.Equal(4, matchedLength);
+    }
+
+    [Fact]
+    public void TryMatchKeywordOrAbbreviation_NoMatchReturnsFalse()
+    {
+        bool found = BasicKeywordAbbreviations.TryMatchKeywordOrAbbreviation(
+            "XYZ", 0, BasicTokens.WordKeywordsLongestFirst, out string keyword, out int matchedLength);
+        Assert.False(found);
+        Assert.Equal("", keyword);
+        Assert.Equal(0, matchedLength);
+    }
+
     #endregion
 }
