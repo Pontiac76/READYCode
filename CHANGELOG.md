@@ -1,5 +1,28 @@
 # Change Log
 
+## [v2.0.0] - 2026-07-26
+
+### New Features
+
+- **6502 Assembly support** - a full assembly-language editor mode alongside BASIC: mnemonic, label, and directive highlighting, a built-in two-pass assembler covering all 56 official 6502 opcodes and addressing modes, `.org`/`.byte`/`.text`/`.word` directives, inline diagnostics, a Symbols panel, hover tooltips, and an ASM Mnemonics reference panel
+- **Hex Editor** - open any file as a raw offset/hex/ASCII grid, with inline byte editing, click-drag selection, and its own undo/redo history
+- **.d81 disk image support** - both Explorers can now browse, create, and author `.d81` (1581) disk images in addition to `.d64`
+- **Find in Files / Replace in Files** - project-wide search and replace across `.bas`, `.asm`, `.s`, `.txt`, and `.prg` files, with match case, whole word, and regular expression options, and a results tree grouped by file
+- **BASIC keyword shortcuts** - recognizes the real C64 keyboard abbreviations for around fifty BASIC keywords (an unshifted letter or two followed by a shifted letter), plus PRINT's `?` shorthand, honored by tokenizing, syntax highlighting, hover tooltips, and GOTO/GOSUB navigation
+- **Online documentation** - a full documentation site covering every major feature now lives in [`/docs`](docs/README.md), linked from the README and from Help > View Online Docs
+
+### Improvements
+
+- Minify's line renumbering now starts at line 0 instead of line 1 (thanks for the tip, @jim_64s8-bitprojects)
+- Prettify, Minify, and hover tooltips all recognize BASIC keyword shortcuts consistently, so a line using a shortcut like `Da` for `DATA` gets the same treatment as the full keyword
+
+### Bug Fixes
+
+- Fixed the PETSCII Reference pane inserting the wrong character for PETSCII codes in the graphics block (96-126), among a few others
+- Fixed assembly-file comments rendering as PETSCII graphics instead of plain text, a regression from the PETSCII fix above
+- Fixed Prettify not adding spaces around mathematical and logical operators (`=`, `+`, `-`, `*`, `/`, `^`, `<`, `>`, `<>`, `<=`, `>=`), while correctly leaving a negating `-` unspaced
+- Fixed `REM` comments gaining an extra space every time a file was saved and reopened
+
 ## [v1.2.0] - 2026-07-18
 
 ### New Features
