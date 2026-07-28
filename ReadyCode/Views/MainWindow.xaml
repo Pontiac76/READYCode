@@ -487,9 +487,9 @@
                                 <Setter Property="Background" Value="{DynamicResource ThemeTabActiveBg}"/>
                                 <Setter TargetName="TopAccent" Property="BorderBrush" Value="#0066CC"/>
                             </Trigger>
-                            <!-- For PRG/ASM tabs, the active top accent matches that kind's Explorer
-                                 badge color instead of the default blue - these two triggers must
-                                 come after the base IsSelected trigger above to win when both apply. -->
+                            <!-- For PRG/ASM/BAS tabs, the active top accent matches that kind's Explorer
+                                 badge color instead of the default blue - these triggers must come
+                                 after the base IsSelected trigger above to win when both apply. -->
                             <MultiDataTrigger>
                                 <MultiDataTrigger.Conditions>
                                     <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsSelected}" Value="True"/>
@@ -503,6 +503,13 @@
                                     <Condition Binding="{Binding Kind}" Value="Asm"/>
                                 </MultiDataTrigger.Conditions>
                                 <Setter TargetName="TopAccent" Property="BorderBrush" Value="{DynamicResource ThemeBadgeAsmBg}"/>
+                            </MultiDataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsSelected}" Value="True"/>
+                                    <Condition Binding="{Binding Kind}" Value="Bas"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter TargetName="TopAccent" Property="BorderBrush" Value="{DynamicResource ThemeBadgeBasBg}"/>
                             </MultiDataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1127,8 +1134,8 @@
                                     </DataTrigger>
                                     <!-- Color the type badge by kind: blue for disk images, green for
                                          confirmed BASIC, orange for machine language, purple for assembly
-                                         source. BAS and any other kind keep the default neutral badge
-                                         background set above. -->
+                                         source, pastel purple for plain-text BASIC source (.bas). Any
+                                         other kind keeps the default neutral badge background set above. -->
                                     <DataTrigger Binding="{Binding Kind}" Value="D64">
                                         <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeDiskBg}"/>
                                         <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeDiskFg}"/>
@@ -1148,6 +1155,10 @@
                                     <DataTrigger Binding="{Binding Kind}" Value="Asm">
                                         <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeAsmBg}"/>
                                         <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeAsmFg}"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding Kind}" Value="Bas">
+                                        <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeBasBg}"/>
+                                        <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeBasFg}"/>
                                     </DataTrigger>
                                 </HierarchicalDataTemplate.Triggers>
                             </HierarchicalDataTemplate>
@@ -1556,8 +1567,8 @@
                                         </DataTrigger>
                                         <!-- Color the type badge by kind: blue for disk images, green for
                                              confirmed BASIC, orange for machine language, purple for assembly
-                                             source. BAS and any other kind keep the default neutral badge
-                                             background set above. -->
+                                             source, pastel purple for plain-text BASIC source (.bas). Any
+                                             other kind keeps the default neutral badge background set above. -->
                                         <DataTrigger Binding="{Binding Kind}" Value="D64">
                                             <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeDiskBg}"/>
                                             <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeDiskFg}"/>
@@ -1577,6 +1588,10 @@
                                         <DataTrigger Binding="{Binding Kind}" Value="Asm">
                                             <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeAsmBg}"/>
                                             <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeAsmFg}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Bas">
+                                            <Setter TargetName="badgeBorder" Property="Background" Value="{DynamicResource ThemeBadgeBasBg}"/>
+                                            <Setter TargetName="badgeText"   Property="Foreground" Value="{DynamicResource ThemeBadgeBasFg}"/>
                                         </DataTrigger>
                                         <!-- Highlights the file currently mounted on Drive A or B. -->
                                         <DataTrigger Value="True">

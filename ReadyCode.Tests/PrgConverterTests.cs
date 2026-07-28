@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Moonspace Labs, LLC
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
+using ReadyCode.Models;
 using ReadyCode.Tokenizer;
 using Xunit;
 
@@ -140,6 +141,20 @@ public class PrgConverterTests
     public void IsBasicProgram_TooShort_ReturnsFalse()
     {
         Assert.False(new PrgConverter().IsBasicProgram([0x01]));
+    }
+
+    // ── ShouldTokenizeOnSave ─────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(EditorLanguage.Basic, "program.prg", true)]
+    [InlineData(EditorLanguage.Basic, "program.bas", false)]
+    [InlineData(EditorLanguage.Basic, "PROGRAM.BAS", false)]
+    [InlineData(EditorLanguage.Basic, "noextension", true)]
+    [InlineData(EditorLanguage.Asm, "program.asm", false)]
+    [InlineData(EditorLanguage.Asm, "program.bas", false)]
+    public void ShouldTokenizeOnSave_ReturnsExpected(EditorLanguage language, string filePath, bool expected)
+    {
+        Assert.Equal(expected, PrgConverter.ShouldTokenizeOnSave(language, filePath));
     }
 
     #endregion

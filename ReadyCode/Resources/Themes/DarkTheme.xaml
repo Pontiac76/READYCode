@@ -44,15 +44,18 @@
 
     <!-- C64U Explorer file-type badges: blue for disk images (storage), orange for machine
          language (caution - not editable/verified), green for confirmed-runnable BASIC (go/ready),
-         purple for 6502 assembly source -->
-    <SolidColorBrush x:Key="ThemeBadgeDiskBg" Color="#0E639C"/>
-    <SolidColorBrush x:Key="ThemeBadgeDiskFg" Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="ThemeBadgeMlBg"   Color="#B35900"/>
-    <SolidColorBrush x:Key="ThemeBadgeMlFg"   Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="ThemeBadgePrgBg"  Color="#1F7A3D"/>
-    <SolidColorBrush x:Key="ThemeBadgePrgFg"  Color="#FFFFFF"/>
-    <SolidColorBrush x:Key="ThemeBadgeAsmBg"  Color="#8347B0"/>
-    <SolidColorBrush x:Key="ThemeBadgeAsmFg"  Color="#FFFFFF"/>
+         purple for 6502 assembly source, pastel purple for plain-text/never-tokenized BASIC
+         source (.bas) -->
+    <SolidColorBrush x:Key="ThemeBadgeDiskBg" Color="#C0C0C0"/>
+    <SolidColorBrush x:Key="ThemeBadgeDiskFg" Color="#000000"/>
+    <SolidColorBrush x:Key="ThemeBadgeMlBg"   Color="#F7DACE"/>
+    <SolidColorBrush x:Key="ThemeBadgeMlFg"   Color="#000000"/>
+    <SolidColorBrush x:Key="ThemeBadgePrgBg"  Color="#28B08E"/>
+    <SolidColorBrush x:Key="ThemeBadgePrgFg"  Color="#000000"/>
+    <SolidColorBrush x:Key="ThemeBadgeAsmBg"  Color="#8F709E"/>
+    <SolidColorBrush x:Key="ThemeBadgeAsmFg"  Color="#000000"/>
+    <SolidColorBrush x:Key="ThemeBadgeBasBg"  Color="#EB8865"/>
+    <SolidColorBrush x:Key="ThemeBadgeBasFg"  Color="#000000"/>
 
     <!-- Status Bar -->
     <SolidColorBrush x:Key="ThemeStatusBarBg"     Color="#2C2C2C"/>

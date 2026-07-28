@@ -545,7 +545,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Filter = "Commodore 64 Programs (*.prg)|*.prg|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
+            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
             Title = "Open File"
         };
         if (dialog.ShowDialog() == true)
@@ -950,7 +950,7 @@ public partial class MainWindow : Window
         {
             Filter = isAsm
                 ? "6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*"
-                : "Commodore 64 Programs (*.prg)|*.prg|All Files (*.*)|*.*",
+                : "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
             Title = "Save File As",
             DefaultExt = isAsm ? ".asm" : ".prg",
             AddExtension = true
@@ -962,15 +962,19 @@ public partial class MainWindow : Window
         {
             ViewModel.CurrentFilePath = dialog.FileName;
             if (ViewModel.ActiveTab != null)
+            {
                 ViewModel.ActiveTab.Language = LanguageClassifier.Classify(ViewModel.CurrentFilePath!);
+                ViewModel.ActiveTab.Kind = FileClassifier.Classify(ViewModel.CurrentFilePath!, isFolder: false);
+            }
             SaveFile(ViewModel.CurrentFilePath!);
             RefreshExplorerForSavedFile(ViewModel.CurrentFilePath!);
         }
     }
 
-    // Writes the active tab's content to filePath - plain text for assembly source, or
-    // BASIC-tokenized PRG bytes otherwise. Must check the tab's language rather than always
-    // tokenizing, or saving a .asm file would silently overwrite it with binary PRG data.
+    // Writes the active tab's content to filePath - plain text for assembly source or .bas
+    // BASIC listings, or BASIC-tokenized PRG bytes otherwise (see
+    // PrgConverter.ShouldTokenizeOnSave). Must check this rather than always tokenizing, or
+    // saving a .asm/.bas file would silently overwrite it with binary PRG data.
     private void SaveFile(string filePath)
     {
         try
@@ -983,7 +987,7 @@ public partial class MainWindow : Window
                 TrackRecentFile(filePath);
                 ViewModel.SetStatus($"File saved: {rawBytes.Length:N0} bytes.");
             }
-            else if (ViewModel.ActiveTab?.Language == EditorLanguage.Asm)
+            else if (ViewModel.ActiveTab != null && !PrgConverter.ShouldTokenizeOnSave(ViewModel.ActiveTab.Language, filePath))
             {
                 File.WriteAllText(filePath, Editor.Text, Encoding.UTF8);
                 ViewModel.IsModified = false;
@@ -1040,7 +1044,7 @@ public partial class MainWindow : Window
             {
                 Filter = isAsm
                     ? "6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*"
-                    : "Commodore 64 Programs (*.prg)|*.prg|All Files (*.*)|*.*",
+                    : "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
                 Title = "Save File",
                 DefaultExt = isAsm ? ".asm" : ".prg",
                 AddExtension = true
@@ -1048,11 +1052,11 @@ public partial class MainWindow : Window
             if (dialog.ShowDialog() != true) return false;
             tab.FilePath = dialog.FileName;
             tab.Language = LanguageClassifier.Classify(tab.FilePath);
-            isAsm = tab.Language == EditorLanguage.Asm;
+            tab.Kind = FileClassifier.Classify(tab.FilePath, isFolder: false);
         }
         try
         {
-            if (isAsm)
+            if (!PrgConverter.ShouldTokenizeOnSave(tab.Language, tab.FilePath))
             {
                 File.WriteAllText(tab.FilePath, tab.Document.Text, Encoding.UTF8);
                 tab.IsModified = false;

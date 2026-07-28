@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Moonspace Labs, LLC
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
+using System.IO;
 using System.Text;
+using ReadyCode.Models;
 
 namespace ReadyCode.Tokenizer;
 
@@ -27,6 +29,19 @@ public class PrgConverter
     #endregion
 
     #region Public Methods
+
+    /// <summary>
+    /// Determines whether a BASIC-language file should be tokenized when saved. Assembly
+    /// source is never tokenized regardless of extension, and <c>.bas</c> is always kept as
+    /// plain PETSCII source text - only other BASIC-language targets (namely <c>.prg</c>)
+    /// round-trip through the real tokenized binary format.
+    /// </summary>
+    /// <param name="language">The tab's editor language.</param>
+    /// <param name="filePath">The path being saved to.</param>
+    /// <returns>True if the source should be tokenized to PRG bytes before writing.</returns>
+    public static bool ShouldTokenizeOnSave(EditorLanguage language, string filePath) =>
+        language == EditorLanguage.Basic
+        && !string.Equals(Path.GetExtension(filePath), ".bas", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Converts BASIC source code to .prg binary format.
