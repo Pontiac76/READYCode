@@ -40,6 +40,7 @@ public class EditorTab : INotifyPropertyChanged
             _filePath = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(FileName));
+            OnPropertyChanged(nameof(FullPath));
         }
     }
 
@@ -96,6 +97,13 @@ public class EditorTab : INotifyPropertyChanged
     /// if the tab has no <see cref="FilePath"/>.
     /// </summary>
     public string FileName => FilePath != null ? Path.GetFileName(FilePath) : (DisplayName ?? "Untitled");
+
+    /// <summary>
+    /// Gets the untrimmed full path to show in a tab tooltip, falling back to
+    /// <see cref="DisplayName"/> or "Untitled" if the tab has no <see cref="FilePath"/> - the
+    /// same fallback <see cref="FileName"/> uses, but without trimming to just the file name.
+    /// </summary>
+    public string FullPath => FilePath ?? DisplayName ?? "Untitled";
 
     /// <summary>
     /// Gets or sets whether the tab has unsaved changes.

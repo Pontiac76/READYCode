@@ -1525,6 +1525,12 @@ public partial class MainWindow : Window
             if (!CloseTab(t)) break;
     }
 
+    private void TabContextCopyPath_Click(object sender, RoutedEventArgs e)
+    {
+        var tab = GetContextMenuTab(sender);
+        if (tab != null) Clipboard.SetText(tab.FullPath);
+    }
+
     #endregion
 
     #region Edit Operations

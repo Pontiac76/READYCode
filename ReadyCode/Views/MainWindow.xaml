@@ -86,6 +86,8 @@
             <MenuItem Header="Close to the Right"                               Click="TabContextCloseToRight_Click"/>
             <MenuItem Header="Close Saved"         InputGestureText="Ctrl+K U" Click="TabContextCloseSaved_Click"/>
             <MenuItem Header="Close All"           InputGestureText="Ctrl+K W" Click="TabContextCloseAll_Click"/>
+            <Separator/>
+            <MenuItem Header="Copy Path"                                       Click="TabContextCopyPath_Click"/>
         </ContextMenu>
 
         <!-- Context menu for the text editor -->
@@ -1899,7 +1901,7 @@
                         </ListBox.ItemsPanel>
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type models:EditorTab}">
-                                <Border Height="33" MinWidth="80" MaxWidth="220">
+                                <Border Height="33" MinWidth="80" MaxWidth="220" ToolTip="{Binding FullPath}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
