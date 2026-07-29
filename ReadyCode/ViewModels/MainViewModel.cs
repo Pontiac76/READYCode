@@ -62,6 +62,9 @@ public class MainViewModel : INotifyPropertyChanged
         _isLeftPanelOpen  = Settings.IsLeftPanelOpen;
         _isRightPanelOpen = Settings.IsRightPanelOpen;
 
+        SymbolGroups.Add(ConstantSymbols);
+        SymbolGroups.Add(LabelSymbols);
+
         FilePrintCommand = new RelayCommand(_ => PrintActiveTab(), _ => HasActiveTab());
         FilePrintPreviewCommand = new RelayCommand(_ => PrintPreviewActiveTab(), _ => HasActiveTab());
         FilePageSetupCommand = new RelayCommand(_ => _printer.ShowPageSetupDialog((Window)Application.Current.MainWindow));
@@ -185,11 +188,24 @@ public class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<VariableInfo> Variables { get; } = new();
 
     /// <summary>
-    /// Gets the labels and constants found in the active assembly document's Symbol Explorer
-    /// tree, kept up to date (and diffed in place, to preserve each node's expanded state) by
+    /// Gets the "Constants" root group of the active assembly document's Symbol Explorer tree,
+    /// kept up to date (and diffed in place, to preserve each node's expanded state) by
     /// <c>MainWindow</c> as the document changes.
     /// </summary>
-    public ObservableCollection<AsmSymbolInfo> Symbols { get; } = new();
+    public AsmSymbolGroupInfo ConstantSymbols { get; } = new("Constants");
+
+    /// <summary>
+    /// Gets the "Labels" root group of the active assembly document's Symbol Explorer tree,
+    /// kept up to date (and diffed in place, to preserve each node's expanded state) by
+    /// <c>MainWindow</c> as the document changes.
+    /// </summary>
+    public AsmSymbolGroupInfo LabelSymbols { get; } = new("Labels");
+
+    /// <summary>
+    /// Gets the Symbol Explorer tree's fixed root collection - always exactly
+    /// <see cref="ConstantSymbols"/> followed by <see cref="LabelSymbols"/>.
+    /// </summary>
+    public ObservableCollection<AsmSymbolGroupInfo> SymbolGroups { get; } = new();
 
     /// <summary>
     /// Gets the project-wide Search panel's results, one entry per file with at least one match,

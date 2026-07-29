@@ -1228,7 +1228,8 @@ public partial class MainWindow : Window
             // activation would otherwise still fire ~300ms from now and redo the same work.
             _diagnosticsTimer.Stop();
             ViewModel.Variables.Clear();
-            ViewModel.Symbols.Clear();
+            ViewModel.ConstantSymbols.Symbols.Clear();
+            ViewModel.LabelSymbols.Symbols.Clear();
             _lastAsmResult = null;
         }
         else if (tab != null)
@@ -1256,7 +1257,8 @@ public partial class MainWindow : Window
         else
         {
             ViewModel.Variables.Clear();
-            ViewModel.Symbols.Clear();
+            ViewModel.ConstantSymbols.Symbols.Clear();
+            ViewModel.LabelSymbols.Symbols.Clear();
             _lastAsmResult = null;
         }
 
@@ -5113,18 +5115,20 @@ public partial class MainWindow : Window
     }
 
     // Re-scans the active document for every label/constant's definition/reference occurrences,
-    // diffing the result into ViewModel.Symbols exactly like RunVariableIndex diffs into
-    // ViewModel.Variables (same IsExpanded-preservation reasoning). Also caches the underlying
-    // AssemblyResult in _lastAsmResult so the hover tooltip can show resolved label/constant
-    // values without re-assembling on every mouse move. Assembly-specific - see RunVariableIndex
-    // for BASIC's equivalent.
+    // diffing the result into ViewModel.ConstantSymbols/LabelSymbols exactly like RunVariableIndex
+    // diffs into ViewModel.Variables (same IsExpanded-preservation reasoning). Also caches the
+    // underlying AssemblyResult in _lastAsmResult so the hover tooltip can show resolved
+    // label/constant values without re-assembling on every mouse move. Assembly-specific - see
+    // RunVariableIndex for BASIC's equivalent.
     private void RunAsmSymbolIndex()
     {
-        var symbols = ViewModel.Symbols;
+        var constants = ViewModel.ConstantSymbols.Symbols;
+        var labels = ViewModel.LabelSymbols.Symbols;
         var document = Editor.Document;
         if (document == null || ViewModel.ActiveTab?.IsHexMode == true || ViewModel.ActiveTab?.Language != EditorLanguage.Asm)
         {
-            symbols.Clear();
+            constants.Clear();
+            labels.Clear();
             _lastAsmResult = null;
             return;
         }
@@ -5141,17 +5145,27 @@ public partial class MainWindow : Window
         {
             seenNames.Add(group.Key);
 
-            var existing = symbols.FirstOrDefault(s => s.Name == group.Key);
+            bool isConstant = group.Any(o => o.Kind == AsmSymbolKind.ConstantDefinition);
+            var targetGroup = isConstant ? constants : labels;
+            var otherGroup = isConstant ? labels : constants;
+
+            // A symbol reclassified since the last reparse (e.g. a constant redefined further
+            // down as a label) moves to its new group instead of leaving a stale duplicate
+            // behind in the old one - reusing the existing AsmSymbolInfo instance rather than
+            // creating a new one also preserves its IsExpanded state across the move.
+            var existing = targetGroup.FirstOrDefault(s => s.Name == group.Key);
             if (existing == null)
             {
-                existing = new AsmSymbolInfo(group.Key);
+                var stray = otherGroup.FirstOrDefault(s => s.Name == group.Key);
+                if (stray != null) otherGroup.Remove(stray);
+
+                existing = stray ?? new AsmSymbolInfo(group.Key);
                 int insertAt = 0;
-                while (insertAt < symbols.Count && string.CompareOrdinal(symbols[insertAt].Name, group.Key) < 0)
+                while (insertAt < targetGroup.Count && string.CompareOrdinal(targetGroup[insertAt].Name, group.Key) < 0)
                     insertAt++;
-                symbols.Insert(insertAt, existing);
+                targetGroup.Insert(insertAt, existing);
             }
 
-            bool isConstant = group.Any(o => o.Kind == AsmSymbolKind.ConstantDefinition);
             existing.TypeBadge = isConstant ? "CONST" : "LABEL";
             existing.ValueText = isConstant
                 ? (asmResult.Constants.TryGetValue(group.Key, out int constValue) ? FormatAsmSymbolValue(constValue) : null)
@@ -5162,6 +5176,12 @@ public partial class MainWindow : Window
                 existing.Occurrences.Add(new AsmSymbolOccurrenceInfo(occurrence.LineNumber, occurrence.Kind));
         }
 
+        RemoveStaleSymbols(constants, seenNames);
+        RemoveStaleSymbols(labels, seenNames);
+    }
+
+    private static void RemoveStaleSymbols(ObservableCollection<AsmSymbolInfo> symbols, HashSet<string> seenNames)
+    {
         for (int i = symbols.Count - 1; i >= 0; i--)
             if (!seenNames.Contains(symbols[i].Name)) symbols.RemoveAt(i);
     }

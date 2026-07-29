@@ -20,6 +20,7 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
         <converters:C64UMountedPathConverter x:Key="C64UMountedPathConverter"/>
+        <converters:IntSumConverter x:Key="IntSumConverter"/>
 
         <!-- Activity bar icon toggle button (left bar — active indicator on left edge) -->
         <Style x:Key="ActivityBarButton" TargetType="ToggleButton">
@@ -1322,17 +1323,35 @@
                             Background="{DynamicResource ThemeFolderExplorerHeaderBg}"
                             BorderBrush="{DynamicResource ThemeFolderExplorerHeaderBorder}" BorderThickness="0,0,0,1"
                             Height="32">
-                        <TextBlock Text="{Binding ViewModel.Symbols.Count, StringFormat='SYMBOLS ({0})'}"
-                                   FontSize="11" FontWeight="Bold" Foreground="{DynamicResource ThemeFileFg}"
-                                   VerticalAlignment="Center" Margin="10,0,0,0"/>
+                        <TextBlock FontSize="11" FontWeight="Bold" Foreground="{DynamicResource ThemeFileFg}"
+                                   VerticalAlignment="Center" Margin="10,0,0,0">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="SYMBOLS ({0})" Converter="{StaticResource IntSumConverter}">
+                                    <Binding Path="ViewModel.ConstantSymbols.Symbols.Count"/>
+                                    <Binding Path="ViewModel.LabelSymbols.Symbols.Count"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
                     </Border>
 
                     <TreeView x:Name="SymbolsTree"
                               Background="{DynamicResource ThemeFolderExplorerBg}"
                               BorderThickness="0"
-                              ItemsSource="{Binding ViewModel.Symbols}"
+                              ItemsSource="{Binding ViewModel.SymbolGroups}"
                               MouseDoubleClick="SymbolsTree_MouseDoubleClick">
                         <TreeView.Resources>
+                            <HierarchicalDataTemplate DataType="{x:Type models:AsmSymbolGroupInfo}" ItemsSource="{Binding Symbols}">
+                                <TextBlock FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ThemeFileFg}"
+                                           Margin="0,2" VerticalAlignment="Center">
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="{}{0} ({1})">
+                                            <Binding Path="Name"/>
+                                            <Binding Path="Symbols.Count"/>
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                            </HierarchicalDataTemplate>
                             <HierarchicalDataTemplate DataType="{x:Type models:AsmSymbolInfo}" ItemsSource="{Binding Occurrences}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -1360,12 +1379,15 @@
                                            FontSize="12" Foreground="{DynamicResource ThemeFileFg}"
                                            Margin="0,1" VerticalAlignment="Center"/>
                             </DataTemplate>
-                        </TreeView.Resources>
-                        <TreeView.ItemContainerStyle>
-                            <Style TargetType="TreeViewItem" BasedOn="{StaticResource ExplorerTreeItemStyle}">
+                            <Style x:Key="AsmSymbolExpandableTreeViewItemStyle" TargetType="TreeViewItem" BasedOn="{StaticResource ExplorerTreeItemStyle}">
                                 <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
                             </Style>
-                        </TreeView.ItemContainerStyle>
+                            <Style x:Key="AsmSymbolLeafTreeViewItemStyle" TargetType="TreeViewItem" BasedOn="{StaticResource ExplorerTreeItemStyle}"/>
+                        </TreeView.Resources>
+                        <TreeView.ItemContainerStyleSelector>
+                            <local:AsmSymbolTreeItemStyleSelector ExpandableStyle="{StaticResource AsmSymbolExpandableTreeViewItemStyle}"
+                                                                   LeafStyle="{StaticResource AsmSymbolLeafTreeViewItemStyle}"/>
+                        </TreeView.ItemContainerStyleSelector>
                     </TreeView>
             </DockPanel>
 

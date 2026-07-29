@@ -111,6 +111,46 @@ public class AsmSymbolInfo : INotifyPropertyChanged
 }
 
 /// <summary>
+/// Represents a root-level grouping node ("Constants" or "Labels") in the Symbol Explorer tree,
+/// holding every symbol of that kind found in the active assembly document.
+/// </summary>
+public class AsmSymbolGroupInfo
+{
+    #region Constructors
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AsmSymbolGroupInfo"/> class.
+    /// </summary>
+    /// <param name="name">The group's display name ("Constants" or "Labels").</param>
+    public AsmSymbolGroupInfo(string name)
+    {
+        Name = name;
+    }
+
+    #endregion
+
+    #region Public Properties
+
+    /// <summary>
+    /// Gets the group's display name.
+    /// </summary>
+    public string Name { get; }
+
+    /// <summary>
+    /// Gets every symbol of this group's kind found in the active document.
+    /// </summary>
+    public ObservableCollection<AsmSymbolInfo> Symbols { get; } = new();
+
+    /// <summary>
+    /// Gets or sets whether this group's node is expanded in the tree view. Defaults to
+    /// expanded so Constants and Labels are both visible as soon as symbols are found.
+    /// </summary>
+    public bool IsExpanded { get; set; } = true;
+
+    #endregion
+}
+
+/// <summary>
 /// Represents a single definition or reference occurrence of a symbol, shown as a leaf node
 /// under its <see cref="AsmSymbolInfo"/> in the Symbol Explorer tree.
 /// </summary>
