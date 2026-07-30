@@ -233,7 +233,7 @@ public partial class MainWindow : Window
         _errorSquiggleRenderer = new ErrorSquiggleRenderer(Editor);
         Editor.TextArea.TextView.BackgroundRenderers.Add(_errorSquiggleRenderer);
         _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-        _diagnosticsTimer.Tick += (_, _) => { _diagnosticsTimer.Stop(); RunDiagnostics(); RunFolding(); RunVariableIndex(); RunAsmSymbolIndex(); };
+        _diagnosticsTimer.Tick += (_, _) => { _diagnosticsTimer.Stop(); RunDocumentAnalysis(); };
         Editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
             _lineNumberColorizer.ActiveDocumentLineNumber =
@@ -1374,8 +1374,13 @@ public partial class MainWindow : Window
                     fs.IsFolded = tab.CollapsedFoldStartOffsets.Contains(fs.StartOffset);
             }
 
-            RunVariableIndex();
-            RunAsmSymbolIndex();
+            // Assigning Editor.Document above already armed the debounce timer via
+            // Editor_TextChanged - run the full analysis for the newly active tab right now
+            // instead of waiting ~300ms for it (so squiggles/symbols/gutter addresses are correct
+            // immediately), then cancel that now-redundant pending tick so the exact same work
+            // doesn't just repeat itself a moment later.
+            RunDocumentAnalysis();
+            _diagnosticsTimer.Stop();
         }
         else
         {
@@ -5165,14 +5170,36 @@ public partial class MainWindow : Window
         _diagnosticsTimer.Start();
     }
 
+    // Runs every debounced analysis pass for the active document in one go: diagnostics, folding,
+    // and (language-specific) variable/symbol indexing. For an assembly tab, Asm6502Assembler's
+    // full two-pass assemble is genuinely expensive on a large file, so it's run exactly once here
+    // and threaded into both RunDiagnostics and RunAsmSymbolIndex, rather than each independently
+    // re-assembling the same unchanged text (previously the dominant cost behind a slow load/tab
+    // switch on a several-hundred-line assembly file). Called by the debounce timer as the user
+    // types, and directly by ActivateTab right after switching tabs - see the comment there for
+    // why that call site also stops the timer immediately afterward.
+    private void RunDocumentAnalysis()
+    {
+        var document = Editor.Document;
+        AssemblyResult? asmResult = document != null && ViewModel.ActiveTab?.Language == EditorLanguage.Asm
+            ? new Asm6502Assembler().Assemble(
+                document.Text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress)
+            : null;
+
+        RunDiagnostics(asmResult);
+        RunFolding();
+        RunVariableIndex();
+        RunAsmSymbolIndex(asmResult);
+    }
+
     // Re-analyzes the active document and refreshes the squiggle underlines: for BASIC, undefined
     // GOTO/GOSUB/THEN targets, unmatched FOR/NEXT, unterminated strings, and duplicate line
     // numbers; for assembly, whatever Asm6502Assembler reports as errors.
-    private void RunDiagnostics()
+    private void RunDiagnostics(AssemblyResult? asmResult = null)
     {
         bool isAsm = ViewModel.ActiveTab?.Language == EditorLanguage.Asm;
         _currentDiagnostics = Editor.Document != null && ViewModel.Settings.EnableLinting
-            ? (isAsm ? AsmDiagnostics.Analyze(Editor.Document.Text) : BasicDiagnostics.Analyze(Editor.Document.Text))
+            ? (isAsm ? AsmDiagnostics.Analyze(Editor.Document.Text, asmResult) : BasicDiagnostics.Analyze(Editor.Document.Text))
             : Array.Empty<EditorDiagnostic>();
         _errorSquiggleRenderer.SetDiagnostics(_currentDiagnostics);
         Editor.TextArea.TextView.Redraw();
@@ -5289,7 +5316,7 @@ public partial class MainWindow : Window
     // underlying AssemblyResult in _lastAsmResult so the hover tooltip can show resolved
     // label/constant values without re-assembling on every mouse move. Assembly-specific - see
     // RunVariableIndex for BASIC's equivalent.
-    private void RunAsmSymbolIndex()
+    private void RunAsmSymbolIndex(AssemblyResult? asmResult = null)
     {
         var constants = ViewModel.ConstantSymbols.Symbols;
         var labels = ViewModel.LabelSymbols.Symbols;
@@ -5302,13 +5329,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        var asmResult = new Asm6502Assembler().Assemble(
+        asmResult ??= new Asm6502Assembler().Assemble(
             document.Text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
         _lastAsmResult = asmResult;
 
         UpdateAsmGutterAddresses(asmResult);
 
-        var byName = AsmSymbolIndex.Analyze(document.Text)
+        // Reuses the parse Assemble() already did (see RunDocumentAnalysis) instead of
+        // re-parsing the same source a second time just to index it.
+        var byName = AsmSymbolIndex.Analyze(asmResult.ParsedLines)
             .GroupBy(o => o.Name, StringComparer.Ordinal);
 
         var seenNames = new HashSet<string>(StringComparer.Ordinal);

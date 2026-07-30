@@ -61,5 +61,13 @@ public class AssemblyResult
     /// </summary>
     public IReadOnlyList<AsmListingEntry> ListingEntries { get; set; } = [];
 
+    /// <summary>
+    /// Gets or sets every source line as parsed during assembly, in source order. Populated
+    /// regardless of <see cref="Success"/>, so a caller that also needs to index the source (e.g.
+    /// <see cref="ReadyCode.Diagnostics.AsmSymbolIndex"/>) can reuse this instead of re-parsing
+    /// the same text a second time.
+    /// </summary>
+    public IReadOnlyList<ParsedAsmLine> ParsedLines { get; set; } = [];
+
     #endregion
 }

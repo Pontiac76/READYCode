@@ -21,6 +21,9 @@ public class AsmLineNumberMargin : AbstractMargin
 
     private const double _rightPadding = 4;
 
+    // Immutable, so built once rather than per glyph/render pass.
+    private static readonly Typeface _typeface = new("Consolas");
+
     #endregion
 
     #region Public Properties
@@ -152,7 +155,7 @@ public class AsmLineNumberMargin : AbstractMargin
 
     private FormattedText CreateFormattedText(string text) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            new Typeface("Consolas"), FontSize, TextBrush, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            _typeface, FontSize, TextBrush, VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
     #endregion
 }

@@ -20,9 +20,15 @@ public static class AsmDiagnostics
     /// line-spanning diagnostic per <see cref="AssemblyError"/>.
     /// </summary>
     /// <param name="source">The full assembly source to analyze.</param>
-    public static IReadOnlyList<EditorDiagnostic> Analyze(string source)
+    /// <param name="result">
+    /// An already-computed <see cref="AssemblyResult"/> for <paramref name="source"/>, if the
+    /// caller has one to hand (e.g. it also needs the result for something else, like the Symbols
+    /// panel), so the source isn't assembled a second time just to get its errors. Assembled
+    /// fresh with default settings when omitted.
+    /// </param>
+    public static IReadOnlyList<EditorDiagnostic> Analyze(string source, AssemblyResult? result = null)
     {
-        var result = new Asm6502Assembler().Assemble(source);
+        result ??= new Asm6502Assembler().Assemble(source);
         if (result.Success) return [];
 
         var lines = new List<(string Line, int Offset)>(BasicDiagnostics.EnumerateLines(source));

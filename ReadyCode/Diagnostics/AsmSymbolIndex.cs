@@ -46,12 +46,26 @@ public static class AsmSymbolIndex
     {
         var parser = new AsmLineParser();
         string[] rawLines = source.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
+        var parsedLines = new List<ParsedAsmLine>(rawLines.Length);
+        for (int i = 0; i < rawLines.Length; i++)
+            parsedLines.Add(parser.ParseLine(rawLines[i], i + 1));
+
+        return Analyze(parsedLines);
+    }
+
+    /// <summary>
+    /// Analyzes already-parsed assembly source (e.g. <see cref="AssemblyResult.ParsedLines"/>,
+    /// from a caller that has already run <see cref="Asm6502Assembler.Assemble"/> and would
+    /// otherwise re-parse the exact same source a second time just to index it) and returns every
+    /// label/constant definition and reference found, in source order.
+    /// </summary>
+    /// <param name="parsedLines">The already-parsed source lines, in source order.</param>
+    public static IReadOnlyList<AsmSymbolOccurrence> Analyze(IReadOnlyList<ParsedAsmLine> parsedLines)
+    {
         var occurrences = new List<AsmSymbolOccurrence>();
 
-        for (int i = 0; i < rawLines.Length; i++)
+        foreach (var line in parsedLines)
         {
-            var line = parser.ParseLine(rawLines[i], i + 1);
-
             if (line.Label != null)
                 occurrences.Add(new AsmSymbolOccurrence(line.Label, line.LineNumber, AsmSymbolKind.LabelDefinition));
 

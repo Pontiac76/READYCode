@@ -174,7 +174,7 @@ public class Asm6502Assembler
         }
 
         if (errors.Count > 0)
-            return new AssemblyResult { Success = false, Errors = errors, Origin = origin, HasExplicitOrigin = customOrigin != null, Labels = labelAddresses, Constants = constants };
+            return new AssemblyResult { Success = false, Errors = errors, Origin = origin, HasExplicitOrigin = customOrigin != null, Labels = labelAddresses, Constants = constants, ParsedLines = parsedLines };
 
         // Pass 2: emit real bytes, resolving label references now that every address is known.
         var codeBytes = new List<byte>();
@@ -221,7 +221,7 @@ public class Asm6502Assembler
         }
 
         if (errors.Count > 0)
-            return new AssemblyResult { Success = false, Errors = errors, Origin = origin, HasExplicitOrigin = customOrigin != null, Labels = labelAddresses, Constants = constants };
+            return new AssemblyResult { Success = false, Errors = errors, Origin = origin, HasExplicitOrigin = customOrigin != null, Labels = labelAddresses, Constants = constants, ParsedLines = parsedLines };
 
         byte[] prgBytes;
         if (customOrigin != null || standaloneOutput)
@@ -238,7 +238,7 @@ public class Asm6502Assembler
         return new AssemblyResult
         {
             Success = true, PrgBytes = prgBytes, Origin = origin, HasExplicitOrigin = customOrigin != null,
-            Labels = labelAddresses, Constants = constants, ListingEntries = listingEntries,
+            Labels = labelAddresses, Constants = constants, ListingEntries = listingEntries, ParsedLines = parsedLines,
         };
     }
 

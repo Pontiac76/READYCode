@@ -1106,6 +1106,33 @@ public class Asm6502AssemblerTests
         Assert.Equal(new byte[] { 0x01, 0x02, 0x03 }, result.ListingEntries[0].Bytes);
     }
 
+    // ── ParsedLines ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_ParsedLines_OneEntryPerSourceLine_OnSuccess()
+    {
+        var result = new Asm6502Assembler().Assemble("start:\nNOP\nJMP start");
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.ParsedLines.Count);
+        Assert.Equal("start", result.ParsedLines[0].Label);
+        Assert.Equal("NOP", result.ParsedLines[1].Mnemonic);
+        Assert.Equal("JMP", result.ParsedLines[2].Mnemonic);
+    }
+
+    [Fact]
+    public void Assemble_ParsedLines_StillPopulatedWhenAssemblyFails()
+    {
+        // A caller that also needs to index the source (see AsmSymbolIndex) shouldn't lose access
+        // to it just because the file currently has an error - same reasoning as Labels/Constants.
+        var result = new Asm6502Assembler().Assemble("start:\nBOGUS\nJMP start");
+
+        Assert.False(result.Success);
+        Assert.Equal(3, result.ParsedLines.Count);
+        Assert.Equal("start", result.ParsedLines[0].Label);
+        Assert.Equal("JMP", result.ParsedLines[2].Mnemonic);
+    }
+
     #endregion
 
     #region Private Methods

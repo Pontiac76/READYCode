@@ -1247,7 +1247,9 @@
                               BorderThickness="0"
                               ItemsSource="{Binding ViewModel.Variables}"
                               MouseDoubleClick="VariablesTree_MouseDoubleClick"
-                              PreviewKeyDown="VariablesTree_PreviewKeyDown">
+                              PreviewKeyDown="VariablesTree_PreviewKeyDown"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <TreeView.Resources>
                             <ContextMenu x:Key="VariableContextMenu">
                                 <MenuItem Header="_Rename" InputGestureText="F2" Click="VariableContextRename_Click"/>
@@ -1341,7 +1343,9 @@
                               Background="{DynamicResource ThemeFolderExplorerBg}"
                               BorderThickness="0"
                               ItemsSource="{Binding ViewModel.SymbolGroups}"
-                              MouseDoubleClick="SymbolsTree_MouseDoubleClick">
+                              MouseDoubleClick="SymbolsTree_MouseDoubleClick"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <TreeView.Resources>
                             <HierarchicalDataTemplate DataType="{x:Type models:AsmSymbolGroupInfo}" ItemsSource="{Binding Symbols}">
                                 <TextBlock FontSize="12" FontWeight="SemiBold"
