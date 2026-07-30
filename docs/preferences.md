@@ -11,22 +11,39 @@ READYCode's settings live in one place: **Preferences > Settings...**, organized
 
 ## Text Editor > General
 
-- **Editor font size** - adjustable from 6 to 72.
+- **Editor font size** - adjustable from 6 to 72, shared by the BASIC/Assembly editor, the Disassembler, and the Hex Editor.
 
-## Text Editor > Formatting
+## BASIC > Formatting
 
 - **Line number zero-padding** - keeps line numbers a consistent width.
 - **Auto-number lines** - automatically inserts the next line number when you press Enter, plus the increment to use.
-- **Column guide** - a vertical guide marking a chosen column, useful for keeping lines within a target width.
+- **Column guide** - a vertical guide marking a chosen column in BASIC tabs, useful for keeping lines within a target width (40 for the C64, 22 for the VIC-20).
 
-## Text Editor > Code Analysis
+## BASIC > Code Analysis
 
 - **Linting** - toggles the inline diagnostics that flag duplicate line numbers, bad `GOTO`/`GOSUB` targets, unmatched `NEXT`, and unterminated strings.
-- **Code folding** - toggles the ability to collapse `REM` blocks, `FOR`/`NEXT` loops, and runs of assembly comments.
+- **Code folding** - toggles the ability to collapse `REM` blocks and `FOR`/`NEXT` loops in a BASIC tab.
 
-## Code > Minify
+## BASIC > Minify
 
 - **Minify code when transferring to/running on the C64U** - automatically applies Minify's transformations to a copy of your program before sending it to the C64 Ultimate, leaving your working copy untouched. The same six options available in the [Minify dialog](minify-and-prettify.md) are configured here for this automatic pass.
+
+## Assembly > Formatting
+
+- **Mnemonic indent column** - column mnemonics (`LDA`, `STA`, `JMP`, etc.) and `.byte` lines are indented to, in the Disassembler's output and via Auto-indent below.
+- **Comment alignment column** - column inline `;` comments are aligned to, in the Disassembler's output and via Auto-indent below.
+- **Column guide** - a vertical guide marking a chosen column in assembly tabs, independent of BASIC's own column guide setting.
+- **Auto-indent** - when enabled, pressing Enter normalizes the line you're leaving: a bare mnemonic line (not preceded by a label) is indented to the Mnemonic indent column and its mnemonic is upper-cased, and the new line is indented to match; any line with an inline `;` comment has that comment realigned to the Comment alignment column, regardless of whether it's a mnemonic, label, or directive line. A whole-line comment, a label-only line (e.g. `loop:`), or a blank line is left untouched.
+
+## Assembly > Code Analysis
+
+- **Code folding** - toggles the ability to collapse runs of consecutive full-line `;` comments in an assembly tab, independent of BASIC's own code folding setting.
+
+## Assembly > Assembler
+
+- **Output** - whether assembled code is packaged as a runnable program with an auto-generated BASIC loader stub ("Auto"), or as a standalone `.prg` with no loader ("Standalone"). Applies whenever a tab is transferred or run on the C64 Ultimate or VICE, and to the Code Statistics and Symbol Explorer's assembled-byte/address figures. An explicit `.org` directive in the source always wins over this setting.
+- **Default origin address** - the memory address standalone output starts at (e.g. `$C000`), used when the source has no `.org` directive of its own.
+- **Generate listing file** - when enabled, transferring or running an assembly tab that has been saved to disk also writes a `.lst` file next to it, showing the address and bytes each source line assembled to alongside the original source. A write failure here doesn't block the transfer/run itself - only a status bar warning.
 
 ## Commodore > Commodore 64 Ultimate
 

@@ -23,6 +23,7 @@ using ReadyCode.Assembler;
 using ReadyCode.C64U;
 using ReadyCode.Diagnostics;
 using ReadyCode.Editor;
+using ReadyCode.Formatting;
 using ReadyCode.Minify;
 using ReadyCode.Models;
 using ReadyCode.Prettify;
@@ -103,7 +104,7 @@ public partial class MainWindow : Window
     private const int _maxClosedTabHistory = 20;
     private readonly List<ClosedTabSnapshot> _closedTabHistory = new();
 
-    // Chord shortcut state (Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U)
+    // Chord shortcut state (Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U / Ctrl+K → Ctrl+F)
     private bool _chordCtrlKActive;
 
     // Keyword completion
@@ -177,6 +178,7 @@ public partial class MainWindow : Window
         EditMinifyCommand    = new RelayCommand(_ => ExecuteMinifyCode(), _ => HasNonEmptyBasicActiveTab());
         EditPrettifyCommand  = new RelayCommand(_ => ExecutePrettifyCode(), _ => HasNonEmptyBasicActiveTab());
         EditRenumberCommand  = new RelayCommand(_ => ExecuteRenumberCode(), _ => HasNonEmptyBasicActiveTab());
+        EditFormatCommand    = new RelayCommand(_ => ExecuteFormatAsmCode(), _ => HasNonEmptyAsmActiveTab());
         EditGoToLineCommand  = new RelayCommand(_ => ExecuteGoToLine(), _ => HasNonEmptyActiveTab());
         GoToDefinitionCommand = new RelayCommand(_ => ExecuteGoToDefinition(), _ => HasNonEmptyActiveTab());
         PreferencesSettingsCommand = new RelayCommand(_ => SettingsPreferences_Click(this, new RoutedEventArgs()));
@@ -396,6 +398,8 @@ public partial class MainWindow : Window
     public ICommand EditPrettifyCommand  { get; }
     /// <summary>Gets the command that opens the Renumber dialog.</summary>
     public ICommand EditRenumberCommand  { get; }
+    /// <summary>Gets the command that reformats the active assembly tab per the Assembly Formatting settings.</summary>
+    public ICommand EditFormatCommand    { get; }
     /// <summary>Gets the command that opens the Go To Line dialog.</summary>
     public ICommand EditGoToLineCommand  { get; }
     /// <summary>Gets the command that jumps to the BASIC line targeted by the GOTO/GOSUB line number under the caret.</summary>
@@ -539,6 +543,84 @@ public partial class MainWindow : Window
         // menu's own focus-restore logic run afterward and steal it back - defer one more
         // focus call so the editor keeps focus regardless of invocation path (menu or Ctrl+N).
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => Editor.Focus());
+    }
+
+    private void C64UDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab();
+
+    // Opens a new read-only disassembly tab with the address-range toolbar visible, ready for
+    // the user to fill in Start/End and click Disassemble. The tab has no FilePath until Saved
+    // As - see FileSaveAs_Click/SaveTabWithDialog for where IsDisassemblyMode gets cleared once
+    // that happens, turning it into an ordinary editable .asm tab.
+    private void OpenDisassemblyTab()
+    {
+        var tab = new EditorTab
+        {
+            Language = EditorLanguage.Asm,
+            Kind = C64UFileKind.Asm,
+            DisplayName = "Disassembly.asm",
+            IsDisassemblyMode = true,
+        };
+        tab.Document.Text = "; Enter a Start and End address above, then click Disassemble.";
+
+        ViewModel.OpenTabs.Add(tab);
+        ActivateTab(tab);
+
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => DisassemblyToolbar.Focus());
+    }
+
+    // Reads the requested memory range from the C64 Ultimate and disassembles it into the active
+    // tab's document. Captures the tab up front (rather than reusing Editor.Document after the
+    // await) so a slow request that completes after the user switches tabs still lands in the
+    // right place instead of overwriting whatever tab is active by then.
+    private async void DisassemblyToolbar_DisassembleRequested(object? sender, EventArgs e)
+    {
+        var tab = ViewModel.ActiveTab;
+        if (tab == null || !tab.IsDisassemblyMode) return;
+
+        if (!DisassemblyToolbar.TryGetAddressRange(out ushort start, out ushort end, out string? rangeError))
+        {
+            ViewModel.SetStatus(rangeError!, StatusType.Error);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("C64U URL not set. Go to Preferences > Settings to configure it.", StatusType.Error);
+            return;
+        }
+
+        int length = end - start + 1;
+
+        try
+        {
+            using var _ = BeginBusyCursor();
+            ViewModel.SetStatus($"Reading {length:N0} bytes from the C64 Ultimate…");
+
+            var client = new C64UltimateClient();
+            byte[] bytes = await client.ReadMemoryAsync(ViewModel.Settings.C64UUrl, start, length);
+
+            var result = new Asm6502Disassembler().Disassemble(
+                bytes, start, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+            tab.Document.Text = result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses;
+            tab.IsModified = false;
+
+            // Only touch the shared gutter margin if this tab is still the one showing - a slow
+            // request that completes after the user switched tabs shouldn't repaint whatever
+            // tab is active by then.
+            if (ReferenceEquals(tab, ViewModel.ActiveTab))
+            {
+                _asmLineNumberMargin.LineAddresses = result.LineAddresses;
+                _asmLineNumberMargin.InvalidateMeasure();
+                _asmLineNumberMargin.InvalidateVisual();
+            }
+
+            ViewModel.SetStatus($"Disassembled {length:N0} bytes from ${start:X4}-${end:X4}.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Disassembly failed: {ex.Message}", StatusType.Error);
+        }
     }
 
     private void FileOpen_Click(object sender, RoutedEventArgs e)
@@ -965,6 +1047,19 @@ public partial class MainWindow : Window
             {
                 ViewModel.ActiveTab.Language = LanguageClassifier.Classify(ViewModel.CurrentFilePath!);
                 ViewModel.ActiveTab.Kind = FileClassifier.Classify(ViewModel.CurrentFilePath!, isFolder: false);
+
+                // Saving a disassembly listing turns it into an ordinary editable .asm file from
+                // now on - re-disassembling in place isn't offered (see EditorTab.IsDisassemblyMode).
+                if (ViewModel.ActiveTab.IsDisassemblyMode)
+                {
+                    ViewModel.ActiveTab.IsDisassemblyMode = false;
+                    ViewModel.ActiveTab.DisassemblyLineAddresses = null;
+                    DisassemblyToolbar.Visibility = Visibility.Collapsed;
+                    Editor.IsReadOnly = false;
+                    _asmLineNumberMargin.LineAddresses = null;
+                    _asmLineNumberMargin.InvalidateMeasure();
+                    _asmLineNumberMargin.InvalidateVisual();
+                }
             }
             SaveFile(ViewModel.CurrentFilePath!);
             RefreshExplorerForSavedFile(ViewModel.CurrentFilePath!);
@@ -1053,6 +1148,23 @@ public partial class MainWindow : Window
             tab.FilePath = dialog.FileName;
             tab.Language = LanguageClassifier.Classify(tab.FilePath);
             tab.Kind = FileClassifier.Classify(tab.FilePath, isFolder: false);
+
+            // Saving a disassembly listing turns it into an ordinary editable .asm file from now
+            // on. Only touch the shared toolbar/Editor UI if this tab actually is the one
+            // currently showing - SaveTabWithDialog can also save a tab that isn't active.
+            if (tab.IsDisassemblyMode)
+            {
+                tab.IsDisassemblyMode = false;
+                tab.DisassemblyLineAddresses = null;
+                if (ReferenceEquals(tab, ViewModel.ActiveTab))
+                {
+                    DisassemblyToolbar.Visibility = Visibility.Collapsed;
+                    Editor.IsReadOnly = false;
+                    _asmLineNumberMargin.LineAddresses = null;
+                    _asmLineNumberMargin.InvalidateMeasure();
+                    _asmLineNumberMargin.InvalidateVisual();
+                }
+            }
         }
         try
         {
@@ -1156,6 +1268,10 @@ public partial class MainWindow : Window
     private bool HasNonEmptyBasicActiveTab() =>
         HasNonEmptyActiveTab() && ViewModel.ActiveTab?.Language != EditorLanguage.Asm;
 
+    // Gates Format Code, the assembly counterpart of the BASIC-only commands above.
+    private bool HasNonEmptyAsmActiveTab() =>
+        HasNonEmptyActiveTab() && ViewModel.ActiveTab?.Language == EditorLanguage.Asm;
+
     // Gates Cut/Copy, which need an actual selection rather than just non-empty content - routes
     // to the hex grid's own selection when a hex tab is active, since Editor's SelectionLength
     // reflects whatever text tab it was last bound to, not the (invisible) hex tab.
@@ -1211,9 +1327,16 @@ public partial class MainWindow : Window
         // Visibility.Collapsed, since a collapsed subtree doesn't participate in layout or fire
         // Loaded events for its elements at all.
         bool isHexMode = tab?.IsHexMode == true;
-        Editor.Visibility = tab != null && !isHexMode ? Visibility.Visible : Visibility.Collapsed;
+        EditorContainer.Visibility = tab != null && !isHexMode ? Visibility.Visible : Visibility.Collapsed;
         HexEditor.Visibility = isHexMode ? Visibility.Visible : Visibility.Collapsed;
         EmptyStateImage.Visibility = tab != null ? Visibility.Collapsed : Visibility.Visible;
+
+        bool isDisassembly = tab?.IsDisassemblyMode == true;
+        DisassemblyToolbar.Visibility = isDisassembly ? Visibility.Visible : Visibility.Collapsed;
+        Editor.IsReadOnly = isDisassembly;
+        _asmLineNumberMargin.LineAddresses = tab?.DisassemblyLineAddresses;
+        _asmLineNumberMargin.InvalidateMeasure();
+        _asmLineNumberMargin.InvalidateVisual();
 
         if (tab != null && tab.IsHexMode)
         {
@@ -1243,7 +1366,7 @@ public partial class MainWindow : Window
             Editor.ScrollToVerticalOffset(tab.ScrollOffsetY);
             Editor.Focus();
 
-            if (ViewModel.Settings.EnableCodeFolding)
+            if (IsCodeFoldingEnabled(tab.Language))
             {
                 _foldingManager = FoldingManager.Install(Editor.TextArea);
                 RunFolding();
@@ -1331,6 +1454,14 @@ public partial class MainWindow : Window
         VariablesPanel.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
         SymbolsPanel.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
 
+        // Minify/Prettify/Renumber are BASIC-only text transforms that would corrupt assembly
+        // source (same reasoning as HasNonEmptyBasicActiveTab) - hidden entirely for Asm rather
+        // than just disabled, with Format Code (the Asm counterpart) shown in their place.
+        MinifyMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        PrettifyMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        RenumberMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        FormatMenuItem.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
+
         // The BASIC Keywords / ASM Mnemonics activity-bar buttons only make sense for their
         // matching language - hide whichever doesn't apply, closing its panel first if it was
         // the one currently open (setting IsChecked here doesn't raise Click, so the panel
@@ -1349,6 +1480,11 @@ public partial class MainWindow : Window
             CloseRightPanel(AsmKeywordsPanel);
             ViewModel.IsRightPanelOpen = RightPanelToggles.Any(t => t.Toggle.IsChecked == true);
         }
+
+        // BASIC and assembly have their own column guide column - re-apply now that
+        // ViewModel.ActiveTab's language has changed, rather than leaving the previous tab's
+        // ruler position on screen until some unrelated trigger (Settings close, etc.) refreshes it.
+        UpdateColumnRulerPosition();
     }
 
     // Cycles the active tab forward (right) or backward (left) through ViewModel.OpenTabs,
@@ -1611,7 +1747,7 @@ public partial class MainWindow : Window
         Editor.SelectAll();
     }
 
-    // ── Chord shortcut: Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U ───────────────────
+    // ── Chord shortcut: Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U / Ctrl+K → Ctrl+F ──
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -1675,6 +1811,7 @@ public partial class MainWindow : Window
                 if (e.Key == Key.C) { ExecuteCommentSelection();   e.Handled = true; return; }
                 if (e.Key == Key.U) { ExecuteUncommentSelection(); e.Handled = true; return; }
                 if (e.Key == Key.O) { OpenFolderDialog();          e.Handled = true; return; }
+                if (e.Key == Key.F) { ExecuteFormatAsmCode();      e.Handled = true; return; }
             }
             else if (Keyboard.Modifiers == ModifierKeys.None)
             {
@@ -1795,6 +1932,31 @@ public partial class MainWindow : Window
         finally { doc.EndUpdate(); }
 
         ViewModel.SetStatus("Code renumbered.");
+    }
+
+    // ── Format (assembly) ───────────────────────────────────────────────────
+
+    // The assembly counterpart of Minify/Prettify/Renumber above - reformats the whole document
+    // in one shot per the Assembly Formatting settings (mnemonic indent column, comment alignment
+    // column), rather than only as-you-type via Enter (see InsertAsmNewlineWithIndent).
+    private void ExecuteFormatAsmCode()
+    {
+        var doc = Editor.Document;
+        if (doc == null || ViewModel.ActiveTab?.Language != EditorLanguage.Asm || string.IsNullOrWhiteSpace(doc.Text)) return;
+
+        string formatted = AsmCodeFormatter.Format(doc.Text, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+
+        if (formatted == doc.Text)
+        {
+            ViewModel.SetStatus("No changes — code is already formatted.");
+            return;
+        }
+
+        doc.BeginUpdate();
+        try { doc.Text = formatted; }
+        finally { doc.EndUpdate(); }
+
+        ViewModel.SetStatus("Code formatted.");
     }
 
     // ── Editor context menu ───────────────────────────────────────────────────
@@ -3004,7 +3166,8 @@ public partial class MainWindow : Window
 
         if (ViewModel.ActiveTab?.Language == EditorLanguage.Asm)
         {
-            var asmResult = new Asm6502Assembler().Assemble(text);
+            var asmResult = new Asm6502Assembler().Assemble(
+                text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
             byteLabel = "Assembled bytes";
             if (asmResult.Success)
             {
@@ -5043,10 +5206,16 @@ public partial class MainWindow : Window
     // own install/uninstall lifecycle, and re-runs diagnostics so squiggles appear/clear
     // immediately. Linting has no persistent state to unwind - RunDiagnostics already clears
     // _currentDiagnostics when the setting is off.
+    // BASIC and assembly have their own code folding toggle (folding REM/FOR-NEXT blocks vs.
+    // runs of ";" comments) - null (no active tab) falls back to the BASIC setting, harmless
+    // since both call sites already guard on there being a document to fold.
+    private bool IsCodeFoldingEnabled(EditorLanguage? language) =>
+        language == EditorLanguage.Asm ? ViewModel.Settings.AsmEnableCodeFolding : ViewModel.Settings.EnableCodeFolding;
+
     private void ApplyCodeAnalysisSettings()
     {
-        bool foldingEnabled = ViewModel.Settings.EnableCodeFolding;
         EditorTab? activeTab = ViewModel.ActiveTab;
+        bool foldingEnabled = IsCodeFoldingEnabled(activeTab?.Language);
 
         if (foldingEnabled && _foldingManager == null && Editor.Document != null)
         {
@@ -5133,8 +5302,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var asmResult = new Asm6502Assembler().Assemble(document.Text);
+        var asmResult = new Asm6502Assembler().Assemble(
+            document.Text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
         _lastAsmResult = asmResult;
+
+        UpdateAsmGutterAddresses(asmResult);
 
         var byName = AsmSymbolIndex.Analyze(document.Text)
             .GroupBy(o => o.Name, StringComparer.Ordinal);
@@ -5178,6 +5350,32 @@ public partial class MainWindow : Window
 
         RemoveStaleSymbols(constants, seenNames);
         RemoveStaleSymbols(labels, seenNames);
+    }
+
+    // Shows real memory addresses in the gutter instead of sequential line numbers for a regular
+    // (non-disassembly) assembly tab, but only once its source has an explicit ".org" - without
+    // one, "address" would just mean wherever the auto-generated BASIC loader stub (or the
+    // standalone-output default origin) happens to land the code, an implementation detail rather
+    // than something the user chose. Falls back to plain line numbers while the source doesn't
+    // assemble cleanly, since there's no valid address data then. A disassembly-mode tab's
+    // addresses (EditorTab.DisassemblyLineAddresses, set by ActivateTab/DisassembleRequested)
+    // always win instead - this leaves those tabs alone entirely.
+    private void UpdateAsmGutterAddresses(AssemblyResult asmResult)
+    {
+        var tab = ViewModel.ActiveTab;
+        if (tab == null || tab.IsDisassemblyMode) return;
+
+        Dictionary<int, ushort>? lineAddresses = null;
+        if (asmResult.Success && asmResult.HasExplicitOrigin)
+        {
+            lineAddresses = new Dictionary<int, ushort>();
+            foreach (var entry in asmResult.ListingEntries)
+                lineAddresses[entry.LineNumber] = entry.Address;
+        }
+
+        _asmLineNumberMargin.LineAddresses = lineAddresses;
+        _asmLineNumberMargin.InvalidateMeasure();
+        _asmLineNumberMargin.InvalidateVisual();
     }
 
     private static void RemoveStaleSymbols(ObservableCollection<AsmSymbolInfo> symbols, HashSet<string> seenNames)
@@ -5704,6 +5902,17 @@ public partial class MainWindow : Window
 
     private void Editor_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Assembly auto-indent: handled up front and returns, rather than falling through to the
+        // BASIC-specific line-number logic below (_leadingLineNumberPattern wouldn't match an
+        // assembly line anyway, but this keeps the two languages' Enter handling clearly separate).
+        bool isEnterForAsmIndent = (e.Key == Key.Enter || e.Key == Key.Return) && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        if (isEnterForAsmIndent && ViewModel.ActiveTab?.Language == EditorLanguage.Asm && ViewModel.Settings.AsmAutoIndent)
+        {
+            e.Handled = true;
+            InsertAsmNewlineWithIndent();
+            return;
+        }
+
         // Ctrl+K chord prefix — next key determines the action
         if (e.Key == Key.K && Keyboard.Modifiers == ModifierKeys.Control)
         {
@@ -5858,6 +6067,84 @@ public partial class MainWindow : Window
         }
     }
 
+    // Handles Enter in an assembly tab when Auto-indent is on. Normalizes the line being left in
+    // two independent ways before moving on:
+    //  1. If it's a bare mnemonic line typed without the configured indent and/or in the wrong
+    //     case (e.g. "lda #25" at column 1), re-indents it to AsmMnemonicIndentColumn and
+    //     upper-cases just the mnemonic token, leaving the operand/comment exactly as typed.
+    //  2. If it has an inline ";" comment with real code before it (a whole-line comment is left
+    //     alone - shifting it to the comment column would just waste space), the comment is
+    //     realigned to AsmCommentAlignColumn.
+    // Then indents the new line to the mnemonic column too, if the (possibly just-normalized)
+    // current line was a mnemonic line. A label-only line, directive, comment, or blank line
+    // triggers neither the indent nor the next-line auto-indent - only comment alignment applies
+    // to those, when they have a trailing comment.
+    private void InsertAsmNewlineWithIndent()
+    {
+        var document = Editor.Document;
+        var line = document.GetLineByOffset(Editor.CaretOffset);
+        string lineText = document.GetText(line);
+        int caretInLine = Editor.CaretOffset - line.Offset;
+        bool caretAtEnd = caretInLine == lineText.Length;
+
+        string workingLine = lineText;
+
+        string trimmedStart = workingLine.TrimStart();
+        int oldIndentLength = workingLine.Length - trimmedStart.Length;
+        string trimmed = trimmedStart.TrimEnd();
+
+        bool isMnemonicLine = AsmCodeFormatter.TryParseAsmMnemonicLine(trimmed, out string mnemonic, out string rest);
+        string indent = isMnemonicLine
+            ? new string(' ', Math.Max(0, ViewModel.Settings.AsmMnemonicIndentColumn - 1))
+            : "";
+
+        if (isMnemonicLine)
+        {
+            string normalized = indent + mnemonic.ToUpperInvariant() + rest;
+            if (normalized != workingLine)
+            {
+                caretInLine = Math.Clamp(caretInLine + (indent.Length - oldIndentLength), 0, normalized.Length);
+                workingLine = normalized;
+            }
+        }
+
+        // Same convention as ".byte"/string literals aren't excluded here either - matches
+        // AsmCommentColorizer's own (deliberately simple) first-";" rule, so a comment realigned
+        // here is always exactly what's shown colored as a comment.
+        int semicolonIndex = workingLine.IndexOf(';');
+        if (semicolonIndex > 0)
+        {
+            string codePart = workingLine[..semicolonIndex];
+            if (!string.IsNullOrWhiteSpace(codePart))
+            {
+                string commentPart = workingLine[semicolonIndex..];
+                string trimmedCode = codePart.TrimEnd();
+                int targetLength = Math.Max(0, ViewModel.Settings.AsmCommentAlignColumn - 1);
+                string alignedCode = trimmedCode.Length < targetLength ? trimmedCode.PadRight(targetLength) : trimmedCode + "  ";
+                string realigned = alignedCode + commentPart;
+
+                if (realigned != workingLine)
+                {
+                    if (caretAtEnd)
+                        caretInLine = realigned.Length;
+                    else if (caretInLine >= semicolonIndex)
+                        caretInLine = Math.Clamp(alignedCode.Length + (caretInLine - semicolonIndex), 0, realigned.Length);
+                    else
+                        caretInLine = Math.Clamp(caretInLine, 0, realigned.Length);
+
+                    workingLine = realigned;
+                }
+            }
+        }
+
+        if (workingLine != lineText)
+            document.Replace(line.Offset, line.Length, workingLine);
+
+        int insertOffset = line.Offset + caretInLine;
+        document.Insert(insertOffset, Environment.NewLine + indent);
+        Editor.CaretOffset = insertOffset + Environment.NewLine.Length + indent.Length;
+    }
+
     private void Editor_PreviewTextInput(object sender, TextCompositionEventArgs e)
     {
         // C64 BASIC is upper case by default - force typed text to match. Assembly source case
@@ -5977,6 +6264,7 @@ public partial class MainWindow : Window
         Editor.Foreground = (Brush)FindResource("ThemeEditorFg");
         Editor.FontSize   = ViewModel.Settings.EditorFontSize;
         Editor.WordWrap   = ViewModel.Settings.WordWrap;
+        HexEditor.HexFontSize = ViewModel.Settings.EditorFontSize;
         _lineNumberColorizer.LineNumberBrush       = (Brush)FindResource("ThemeEditorLineNumberFg");
         _lineNumberColorizer.ActiveLineNumberBrush = (Brush)FindResource("ThemeEditorFg");
         _keywordColorizer.KeywordBrush          = (Brush)FindResource("ThemeEditorKeywordFg");
@@ -6007,8 +6295,21 @@ public partial class MainWindow : Window
         // the position's change handler reliably redraws the ruler in its hidden/shown state
         Editor.Options.ShowColumnRuler = true;
         Editor.TextArea.TextView.ColumnRulerPen = new Pen((Brush)FindResource("ThemeEditorGuideLineFg"), 1);
-        Editor.Options.ColumnRulerPosition = ViewModel.Settings.ShowColumnGuide ? Math.Max(1, ViewModel.Settings.ColumnGuideColumn) : -1;
+        UpdateColumnRulerPosition();
+    }
 
+    // The column guide's target column is per-language (BASIC and assembly have their own
+    // setting - see AppSettings.BasicColumnGuideColumn/AsmColumnGuideColumn), so unlike the rest
+    // of ApplyEditorAppearance's one-time-refresh values, this also needs to be re-applied
+    // whenever the active tab's language changes, not just on startup/theme change/Settings close.
+    private int ActiveColumnGuideColumn() =>
+        ViewModel.ActiveTab?.Language == EditorLanguage.Asm
+            ? ViewModel.Settings.AsmColumnGuideColumn
+            : ViewModel.Settings.BasicColumnGuideColumn;
+
+    private void UpdateColumnRulerPosition()
+    {
+        Editor.Options.ColumnRulerPosition = ViewModel.Settings.ShowColumnGuide ? Math.Max(1, ActiveColumnGuideColumn()) : -1;
         Editor.TextArea.TextView.Redraw();
     }
 
@@ -6041,7 +6342,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateScreenPositionStatus()
     {
-        int wrapColumn = Math.Max(1, ViewModel.Settings.ColumnGuideColumn);
+        int wrapColumn = Math.Max(1, ActiveColumnGuideColumn());
         int caretIndex = Editor.CaretOffset;
 
         int row = 1;

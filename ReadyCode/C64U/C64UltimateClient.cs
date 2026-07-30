@@ -3,6 +3,7 @@
 
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 
 namespace ReadyCode.C64U;
@@ -15,6 +16,15 @@ public class C64UltimateClient
     #region Private Fields
 
     private static readonly HttpClient _httpClient = new();
+
+    // GET /v1/machine:readmem's length cap isn't documented, so reads are split into chunks
+    // this size regardless of the requested range, rather than risk an oversized single request
+    // failing or timing out on the device.
+    private const int _maxReadMemoryChunk = 4096;
+
+    // Standard C64 KERNAL zero-page addresses for the keyboard input buffer - see TypeAsync.
+    private const ushort _keyboardBufferAddress = 0x0277;
+    private const ushort _keyboardBufferLengthAddress = 0x00C6;
 
     #endregion
 
@@ -97,6 +107,91 @@ public class C64UltimateClient
 
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"The C64 Ultimate returned {(int)response.StatusCode} {response.ReasonPhrase}: {body}");
+    }
+
+    /// <summary>
+    /// Reads a range of machine memory via GET /v1/machine:readmem, a live DMA read on the
+    /// cartridge bus reflecting whatever's currently banked in - there is no bank-selection
+    /// parameter, unlike VICE's binary monitor. Large ranges are read in multiple chunked
+    /// requests rather than one, since the endpoint's maximum length isn't documented.
+    /// </summary>
+    /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
+    /// <param name="address">The starting memory address to read from.</param>
+    /// <param name="length">The number of bytes to read.</param>
+    /// <returns>The raw bytes read from memory.</returns>
+    public async Task<byte[]> ReadMemoryAsync(string baseUrl, ushort address, int length)
+    {
+        var result = new byte[length];
+        int offset = 0;
+
+        while (offset < length)
+        {
+            int chunkLength = Math.Min(_maxReadMemoryChunk, length - offset);
+            int chunkAddress = address + offset;
+            var endpoint = BuildEndpointUri(baseUrl, $"v1/machine:readmem?address={chunkAddress:X4}&length={chunkLength}");
+
+            using var response = await _httpClient.GetAsync(endpoint);
+            if (!response.IsSuccessStatusCode)
+            {
+                string body = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"The C64 Ultimate returned {(int)response.StatusCode} {response.ReasonPhrase}: {body}");
+            }
+
+            byte[] chunk = await response.Content.ReadAsByteArrayAsync();
+            if (chunk.Length != chunkLength)
+                throw new InvalidOperationException($"Expected {chunkLength} bytes from address ${chunkAddress:X4} but received {chunk.Length}.");
+
+            Array.Copy(chunk, 0, result, offset, chunkLength);
+            offset += chunkLength;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Writes bytes directly to machine memory via PUT /v1/machine:writemem. Limited to 128 bytes
+    /// per call, the endpoint's documented cap for this URL-parameter (as opposed to binary
+    /// attachment) form.
+    /// </summary>
+    /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
+    /// <param name="address">The memory address to start writing at.</param>
+    /// <param name="data">The bytes to write.</param>
+    public async Task WriteMemoryAsync(string baseUrl, ushort address, byte[] data)
+    {
+        if (data.Length > 128)
+            throw new ArgumentException("writemem accepts at most 128 bytes per call.", nameof(data));
+
+        string hex = Convert.ToHexString(data);
+        var endpoint = BuildEndpointUri(baseUrl, $"v1/machine:writemem?address={address:X4}&data={hex}");
+
+        using var response = await _httpClient.PutAsync(endpoint, null);
+        string body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"The C64 Ultimate returned {(int)response.StatusCode} {response.ReasonPhrase}: {body}");
+    }
+
+    /// <summary>
+    /// Simulates typing on the C64's keyboard by stuffing the given text directly into the
+    /// KERNAL's keyboard input buffer, as if a user had typed it - the standard trick for issuing
+    /// an immediate-mode BASIC command (e.g. "SYS49152\r") right after a DMA load, since a
+    /// standalone (no BASIC loader stub) program's origin can't otherwise be reached through the
+    /// load/run REST endpoints alone. Limited to 10 characters, the real keyboard buffer's fixed
+    /// size ($0277-$0280).
+    /// </summary>
+    /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
+    /// <param name="text">
+    /// The characters to "type" - typically ending in "\r" (Enter) so the command executes
+    /// immediately rather than just sitting on the input line unsubmitted.
+    /// </param>
+    public async Task TypeAsync(string baseUrl, string text)
+    {
+        if (text.Length > 10)
+            throw new ArgumentException("The C64 keyboard buffer holds at most 10 characters.", nameof(text));
+
+        byte[] bytes = Encoding.ASCII.GetBytes(text);
+        await WriteMemoryAsync(baseUrl, _keyboardBufferAddress, bytes);
+        await WriteMemoryAsync(baseUrl, _keyboardBufferLengthAddress, [(byte)bytes.Length]);
     }
 
     /// <summary>

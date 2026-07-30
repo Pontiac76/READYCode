@@ -1,0 +1,50 @@
+<UserControl x:Class="ReadyCode.Views.DisassemblyToolbarControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Visibility="Collapsed">
+
+    <Border Background="{DynamicResource ThemeMenuItemBg}"
+            BorderBrush="{DynamicResource ThemeMenuItemBorder}"
+            BorderThickness="0,0,0,1"
+            Padding="10,6">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Start:" VerticalAlignment="Center"
+                       Foreground="{DynamicResource ThemeMenuItemFg}" Margin="0,0,4,0"/>
+            <TextBox x:Name="StartAddressBox"
+                     Width="70" Height="22"
+                     BorderThickness="1"
+                     BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
+                     Background="{DynamicResource ThemeSettingsInputBg}"
+                     Foreground="{DynamicResource ThemeMenuItemFg}"
+                     CaretBrush="{DynamicResource ThemeMenuItemFg}"
+                     FontFamily="Consolas" FontSize="12"
+                     Padding="4,2"
+                     VerticalContentAlignment="Center"
+                     KeyDown="AddressBox_KeyDown"/>
+
+            <TextBlock Text="End:" VerticalAlignment="Center"
+                       Foreground="{DynamicResource ThemeMenuItemFg}" Margin="12,0,4,0"/>
+            <TextBox x:Name="EndAddressBox"
+                     Width="70" Height="22"
+                     BorderThickness="1"
+                     BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
+                     Background="{DynamicResource ThemeSettingsInputBg}"
+                     Foreground="{DynamicResource ThemeMenuItemFg}"
+                     CaretBrush="{DynamicResource ThemeMenuItemFg}"
+                     FontFamily="Consolas" FontSize="12"
+                     Padding="4,2"
+                     VerticalContentAlignment="Center"
+                     KeyDown="AddressBox_KeyDown"/>
+
+            <Button x:Name="DisassembleButton"
+                    Content="Disassemble"
+                    Margin="12,0,0,0" Height="22" Padding="10,0"
+                    Foreground="{DynamicResource ThemeMenuItemFg}"
+                    Background="{DynamicResource ThemeMenuItemBg}"
+                    BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
+                    BorderThickness="1"
+                    Cursor="Hand"
+                    Click="DisassembleButton_Click"/>
+        </StackPanel>
+    </Border>
+</UserControl>

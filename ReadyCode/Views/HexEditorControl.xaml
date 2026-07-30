@@ -19,11 +19,11 @@
         <DockPanel>
             <!-- Fixed column-index header (00-0F), aligned with the hex cell columns below - stays
                  visible while the rows beneath it scroll vertically. -->
-            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4"
+            <StackPanel x:Name="HeaderPanel" DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4"
                         Background="{DynamicResource ThemePanelHeaderBg}">
-                <TextBlock Text="Offset" Width="64" Style="{StaticResource HexHeaderCellStyle}"/>
-                <Rectangle Width="1" Margin="6,2" Fill="{DynamicResource ThemeSettingsDivider}"/>
-                <StackPanel Orientation="Horizontal" Margin="8,0">
+                <TextBlock x:Name="OffsetHeaderText" Text="Offset" Width="64" Style="{StaticResource HexHeaderCellStyle}"/>
+                <Rectangle x:Name="HeaderDivider1" Width="1" Margin="6,2" Fill="{DynamicResource ThemeSettingsDivider}"/>
+                <StackPanel x:Name="CellsHeaderPanel" Orientation="Horizontal" Margin="8,0">
                     <TextBlock Text="00" Width="22" Margin="1,0" TextAlignment="Center" Style="{StaticResource HexHeaderCellStyle}"/>
                     <TextBlock Text="01" Width="22" Margin="1,0" TextAlignment="Center" Style="{StaticResource HexHeaderCellStyle}"/>
                     <TextBlock Text="02" Width="22" Margin="1,0" TextAlignment="Center" Style="{StaticResource HexHeaderCellStyle}"/>
@@ -41,8 +41,8 @@
                     <TextBlock Text="0E" Width="22" Margin="1,0" TextAlignment="Center" Style="{StaticResource HexHeaderCellStyle}"/>
                     <TextBlock Text="0F" Width="22" Margin="1,0" TextAlignment="Center" Style="{StaticResource HexHeaderCellStyle}"/>
                 </StackPanel>
-                <Rectangle Width="1" Margin="6,2" Fill="{DynamicResource ThemeSettingsDivider}"/>
-                <TextBlock Text="ASCII" Margin="8,0,0,0" Style="{StaticResource HexHeaderCellStyle}"/>
+                <Rectangle x:Name="HeaderDivider2" Width="1" Margin="6,2" Fill="{DynamicResource ThemeSettingsDivider}"/>
+                <TextBlock x:Name="AsciiHeaderText" Text="ASCII" Margin="8,0,0,0" Style="{StaticResource HexHeaderCellStyle}"/>
             </StackPanel>
             <Rectangle DockPanel.Dock="Top" Height="1" Margin="0,0,0,2" Fill="{DynamicResource ThemeSettingsDivider}"/>
 

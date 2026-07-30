@@ -62,15 +62,43 @@ public sealed record AsmWordEntry(int? NumericValue, string? SymbolName, int Sym
 /// <param name="Label">The label defined on this line (before the colon), or null if none.</param>
 /// <param name="Mnemonic">The instruction mnemonic, or null for a blank/label-only/comment-only line.</param>
 /// <param name="Form">The operand's syntactic shape. Meaningless when <paramref name="Mnemonic"/> is null.</param>
-/// <param name="NumericValue">The operand's resolved numeric value, or null if it was a symbol reference or there is no operand.</param>
-/// <param name="SymbolName">The operand's referenced symbol name, or null if it was numeric or there is no operand.</param>
+/// <param name="NumericValue">
+/// For an instruction line, the operand's resolved numeric value (null if it was a symbol
+/// reference or there is no operand). For a "NAME = value"/".label" constant declaration line
+/// (<paramref name="ConstantName"/> non-null) whose value is a plain numeric literal, that value -
+/// null if the constant's value is a symbol reference or <paramref name="ConstantIsCurrentAddress"/>.
+/// </param>
+/// <param name="SymbolName">
+/// For an instruction line, the operand's referenced symbol name (null if numeric or no operand).
+/// For a constant declaration whose value references another symbol (e.g. the KickAssembler-style
+/// ".label datsaucxlo = data+1"), that symbol's name - null for a plain literal or "*".
+/// </param>
 /// <param name="Error">A description of why this line could not be parsed, or null if parsing succeeded.</param>
-/// <param name="SymbolOffset">A constant integer added to <paramref name="SymbolName"/>'s resolved value (e.g. the "+1" in "msgptr+1"), 0 if none.</param>
-/// <param name="ConstantName">The name being defined, for a "NAME = value" constant declaration line, or null otherwise.</param>
-/// <param name="ConstantValue">The declared constant's numeric value, non-null exactly when <paramref name="ConstantName"/> is non-null.</param>
+/// <param name="SymbolOffset">
+/// A constant integer added to the resolved value of <paramref name="SymbolName"/> (or, for a
+/// constant whose value is "*"/"*+N", to the current address) - e.g. the "+1" in "msgptr+1". 0 if
+/// none.
+/// </param>
+/// <param name="ConstantName">The name being defined, for a "NAME = value"/".label" constant declaration line, or null otherwise.</param>
 /// <param name="ByteData">The literal bytes to emit, for a ".byte" or ".text" directive line, or null otherwise.</param>
 /// <param name="OrgAddress">The requested origin address, for an ".org" directive line, or null otherwise.</param>
 /// <param name="WordData">The literal-or-symbolic 16-bit entries to emit, for a ".word" directive line, or null otherwise.</param>
+/// <param name="ConstantIsCurrentAddress">
+/// True when a constant declaration's value (or its base term, if an <paramref name="OffsetSymbolName"/>
+/// or <paramref name="SymbolOffset"/> follows) is "*" - KickAssembler's "current program counter"
+/// pseudo-symbol, e.g. ".label data = *". Always false outside a constant declaration.
+/// </param>
+/// <param name="OffsetSymbolName">
+/// For a constant declaration whose value has the form "A - B"/"A + B" where B is itself a
+/// symbol or "*" (e.g. "size = * - start"), B's name (or "*") - null when there is no offset
+/// term, or when it's a plain integer already folded into <paramref name="SymbolOffset"/>.
+/// Always null outside a constant declaration; an instruction/".word" operand's offset is
+/// always a plain integer.
+/// </param>
+/// <param name="OffsetIsNegative">
+/// True when <paramref name="OffsetSymbolName"/>'s resolved value is subtracted from the base
+/// rather than added (e.g. the "-" in "* - start"). Meaningless when <paramref name="OffsetSymbolName"/> is null.
+/// </param>
 public sealed record ParsedAsmLine(
     int LineNumber,
     string? Label,
@@ -80,16 +108,21 @@ public sealed record ParsedAsmLine(
     string? SymbolName,
     string? Error,
     string? ConstantName = null,
-    int? ConstantValue = null,
     IReadOnlyList<byte>? ByteData = null,
     int SymbolOffset = 0,
     int? OrgAddress = null,
-    IReadOnlyList<AsmWordEntry>? WordData = null);
+    IReadOnlyList<AsmWordEntry>? WordData = null,
+    bool ConstantIsCurrentAddress = false,
+    string? OffsetSymbolName = null,
+    bool OffsetIsNegative = false);
 
 /// <summary>
 /// Parses a single line of 6502 assembly source into its label, mnemonic, and operand shape.
 /// Has no knowledge of legal addressing modes per mnemonic or label addresses - resolving the
 /// operand shape into a final <see cref="AddressingMode"/> is <see cref="Asm6502Assembler"/>'s job.
+/// The one exception to this line-at-a-time independence is ".encoding" (see the private
+/// <c>_encoding</c> field), which must be driven as a single instance across a whole file in
+/// source order, same as <see cref="Asm6502Assembler.Assemble"/> already does.
 /// </summary>
 public class AsmLineParser
 {
@@ -104,6 +137,12 @@ public class AsmLineParser
     private static readonly Regex _indirectXPattern = new(@"^\((.+),\s*[Xx]\)$", RegexOptions.Compiled);
     private static readonly Regex _indirectAbsPattern = new(@"^\((.+)\)$", RegexOptions.Compiled);
     private static readonly Regex _indexedPattern = new(@"^(.+?)\s*,\s*([XxYy])$", RegexOptions.Compiled);
+
+    // Set by an ".encoding" directive and applied to every ".byte"/".text" string literal from
+    // that point in the source onward, until the next ".encoding" - the one piece of state this
+    // parser carries across lines (see the class doc comment), relying on Asm6502Assembler always
+    // driving a single instance through the whole file in source order.
+    private AsmTextEncoding _encoding = AsmTextEncoding.Ascii;
 
     #endregion
 
@@ -147,15 +186,57 @@ public class AsmLineParser
             return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null, OrgAddress: orgValue);
         }
 
+        // "* = value" (e.g. "* = $c000") - an alternate spelling of ".org value", ported from
+        // assemblers (KickAssembler among them) that use "*" for the current program counter and
+        // let assigning straight to it retarget the origin. Same rules as ".org": a numeric
+        // literal only, and Asm6502Assembler enforces it must be the first thing in the file (it
+        // reads the exact same OrgAddress field, so both spellings share that check for free).
+        if (code.StartsWith('*'))
+        {
+            string afterStar = code[1..].TrimStart();
+            if (afterStar.StartsWith('='))
+            {
+                string starOrgArgs = afterStar[1..].Trim();
+                if (!TryParseValue(starOrgArgs, out int starOrgValue, out string? starOrgSymbol) || starOrgSymbol != null)
+                    return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                        $"'* =' value \"{starOrgArgs}\" must be a numeric literal.");
+                if (starOrgValue is < 0 or > 0xFFFF)
+                    return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                        $"'* =' value {starOrgValue} does not fit a 16-bit address (0-65535).");
+
+                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null, OrgAddress: starOrgValue);
+            }
+        }
+
+        // ".encoding \"mode\"" (KickAssembler-style, e.g. .encoding "petscii_mixed") - changes how
+        // every ".byte"/".text" string literal from here to the next ".encoding" (or end of file)
+        // converts its characters to bytes. Recognized mode names: "ascii" (the default - a plain
+        // character code, unchanged), "petscii_upper", "petscii_mixed", "screencode_upper",
+        // "screencode_mixed" - see AsmTextEncoding for what each one means. Declares no bytes of
+        // its own and doesn't advance the address counter, same as any other pure directive.
+        if (IsDirective(code, ".encoding", out string encodingArgs))
+        {
+            if (!TryParseQuotedString(encodingArgs, out string modeText))
+                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                    $"'.encoding' value \"{encodingArgs}\" must be a quoted string.");
+            if (!TryParseEncodingMode(modeText, out AsmTextEncoding mode))
+                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                    $"Unknown '.encoding' mode \"{modeText}\".");
+
+            _encoding = mode;
+            return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null);
+        }
+
         // ".byte"/".text" directives (e.g. .byte "HELLO", $0d, $00) - a comma-separated list of
-        // quoted strings (each character becomes one byte, its plain character code - no PETSCII
-        // remapping) and/or numeric literals. ".text" is a pure alias of ".byte" - both directive
-        // names exist only to let source express intent (data vs. text), the grammar is
-        // identical. Checked before the mnemonic/operand split below since these directives have
-        // their own comma-delimited grammar rather than a single operand.
+        // quoted strings (each character becomes a byte per the active ".encoding" above - a
+        // plain character code, unchanged, unless ".encoding" has set something else) and/or
+        // numeric literals. ".text" is a pure alias of ".byte" - both directive names exist only
+        // to let source express intent (data vs. text), the grammar is identical. Checked before
+        // the mnemonic/operand split below since these directives have their own comma-delimited
+        // grammar rather than a single operand.
         if (IsDirective(code, ".byte", out string byteArgs) || IsDirective(code, ".text", out byteArgs))
         {
-            if (!TryParseByteDirective(byteArgs, out List<byte>? byteData, out string? byteError))
+            if (!TryParseByteDirective(byteArgs, _encoding, out List<byte>? byteData, out string? byteError))
                 return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, byteError);
 
             return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null, ByteData: byteData);
@@ -172,19 +253,70 @@ public class AsmLineParser
             return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null, WordData: wordData);
         }
 
+        // ".label NAME = value" (KickAssembler-style constant declaration) is accepted as a
+        // synonym for the bare "NAME = value" form immediately below - stripping the keyword and
+        // falling through to the exact same parsing, including "*"/symbol-reference values.
+        if (IsDirective(code, ".label", out string labelDeclText))
+            code = labelDeclText;
+
         // "NAME = value" constant declaration (e.g. "chrout = $ffd2") - checked before the
         // mnemonic/operand split below, since without this check the '=' would otherwise be
-        // mis-parsed as a nonsensical operand on a bogus "chrout" mnemonic.
+        // mis-parsed as a nonsensical operand on a bogus "chrout" mnemonic. The value's base term
+        // can be a plain numeric literal, a reference to another symbol, or "*" for the current
+        // program counter (e.g. ".label data = *"); an optional "+"/"-" offset term follows the
+        // same three shapes, so "data+1", "*+1", and "size = * - start" are all valid.
+        // Asm6502Assembler resolves which of these it actually is - a symbol/"*" base or offset
+        // needs to know code layout, a plain literal doesn't.
         var constMatch = _constantPattern.Match(code);
         if (constMatch.Success)
         {
             string constName = constMatch.Groups[1].Value;
             string valueText = constMatch.Groups[2].Value.Trim();
-            if (!TryParseValue(valueText, out int constValue, out string? constSymbol) || constSymbol != null)
-                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
-                    $"Constant value \"{valueText}\" must be a numeric literal.");
 
-            return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null, null, constName, constValue);
+            if (!TrySplitExpressionTerms(valueText, out string baseText, out string? offsetText, out bool offsetIsNegative))
+                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                    $"Malformed constant value \"{valueText}\".");
+
+            bool baseIsCurrentAddress = baseText == "*";
+            int? baseNumeric = null;
+            string? baseSymbol = null;
+            if (!baseIsCurrentAddress)
+            {
+                if (!TryParseValue(baseText, out int parsedBase, out baseSymbol))
+                    return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                        $"Malformed constant value \"{valueText}\".");
+                baseNumeric = baseSymbol == null ? parsedBase : null;
+            }
+
+            int literalOffset = 0;
+            string? offsetSymbol = null;
+            if (offsetText != null)
+            {
+                if (offsetText == "*" || _symbolPattern.IsMatch(offsetText))
+                {
+                    offsetSymbol = offsetText;
+                }
+                else if (int.TryParse(offsetIsNegative ? $"-{offsetText}" : offsetText, out int parsedOffset))
+                {
+                    literalOffset = parsedOffset;
+                }
+                else
+                {
+                    return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
+                        $"Malformed constant value \"{valueText}\".");
+                }
+            }
+
+            // A plain literal base with no symbol/"*" anywhere folds the whole expression into a
+            // single resolved number right here, exactly like before - everything else (a "*"
+            // /symbol base, or a "*"/symbol offset) is deferred to Asm6502Assembler's pass 1,
+            // since it depends on code layout.
+            if (!baseIsCurrentAddress && baseSymbol == null && offsetSymbol == null)
+                return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, baseNumeric!.Value + literalOffset, null, null, ConstantName: constName);
+
+            return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, baseNumeric, baseSymbol, null,
+                ConstantName: constName, SymbolOffset: literalOffset, ConstantIsCurrentAddress: baseIsCurrentAddress,
+                OffsetSymbolName: offsetSymbol, OffsetIsNegative: offsetSymbol != null && offsetIsNegative);
         }
 
         int sp = code.IndexOfAny(_whitespaceChars);
@@ -261,6 +393,8 @@ public class AsmLineParser
     {
         baseText = text;
         offset = 0;
+        if (text.Length == 0) return true; // nothing to split - TryParseValue rejects the empty base text
+
         int opIdx = text.IndexOfAny(['+', '-'], 1);
         if (opIdx < 0) return true;
 
@@ -268,14 +402,46 @@ public class AsmLineParser
         return int.TryParse(text[opIdx..].Trim(), out offset);
     }
 
-    // Parses a $hex / %binary / decimal numeric literal, or - failing that - accepts a bare
-    // identifier as a symbol reference to be resolved against label addresses later.
+    // Splits a constant's value expression "A" or "A + B" / "A - B" into its base and (optional)
+    // offset term text, leaving both terms unparsed - unlike TrySplitOffset (used for
+    // instruction/".word" operands), a constant's offset term isn't necessarily a plain integer,
+    // e.g. the "start" in "size = * - start", so the caller decides how to parse each term. Skips
+    // index 0, same reasoning as TrySplitOffset.
+    private static bool TrySplitExpressionTerms(string text, out string baseText, out string? offsetText, out bool offsetIsNegative)
+    {
+        baseText = text;
+        offsetText = null;
+        offsetIsNegative = false;
+        if (text.Length == 0) return false;
+
+        int opIdx = text.IndexOfAny(['+', '-'], 1);
+        if (opIdx < 0) return true;
+
+        baseText = text[..opIdx].Trim();
+        offsetIsNegative = text[opIdx] == '-';
+        offsetText = text[(opIdx + 1)..].Trim();
+        return baseText.Length > 0 && offsetText.Length > 0;
+    }
+
+    // Parses a $hex / %binary / decimal numeric literal, "*" for the current program counter, or
+    // - failing that - accepts a bare identifier as a symbol reference to be resolved against
+    // label addresses later. "*" is returned as symbol "*", a reserved name no real identifier
+    // can ever collide with (see _symbolPattern) - callers that resolve symbols (Asm6502Assembler)
+    // special-case it to mean the address of whatever line is being resolved right now, e.g. an
+    // instruction operand like "JMP *" or a ".word *" entry. AsmSymbolIndex excludes it from the
+    // Symbols panel since it isn't a real symbol.
     private static bool TryParseValue(string text, out int value, out string? symbol)
     {
         value = 0;
         symbol = null;
         text = text.Trim();
         if (text.Length == 0) return false;
+
+        if (text == "*")
+        {
+            symbol = "*";
+            return true;
+        }
 
         if (text[0] == '$') return TryParseRadix(text[1..], 16, out value);
         if (text[0] == '%') return TryParseRadix(text[1..], 2, out value);
@@ -290,11 +456,37 @@ public class AsmLineParser
         return false;
     }
 
+    // Parses ".encoding"'s single double-quoted string argument (e.g. the "petscii_mixed" in
+    // .encoding "petscii_mixed"), rejecting anything else - no comma list, no numeric literals,
+    // unlike ".byte"'s richer grammar.
+    private static bool TryParseQuotedString(string argsText, out string value)
+    {
+        value = "";
+        string trimmed = argsText.Trim();
+        if (trimmed.Length < 2 || trimmed[0] != '"' || trimmed[^1] != '"') return false;
+
+        value = trimmed[1..^1];
+        return true;
+    }
+
+    private static bool TryParseEncodingMode(string modeText, out AsmTextEncoding mode)
+    {
+        switch (modeText.Trim().ToLowerInvariant())
+        {
+            case "ascii": mode = AsmTextEncoding.Ascii; return true;
+            case "petscii_upper": mode = AsmTextEncoding.PetsciiUpper; return true;
+            case "petscii_mixed": mode = AsmTextEncoding.PetsciiMixed; return true;
+            case "screencode_upper": mode = AsmTextEncoding.ScreenCodeUpper; return true;
+            case "screencode_mixed": mode = AsmTextEncoding.ScreenCodeMixed; return true;
+            default: mode = AsmTextEncoding.Ascii; return false;
+        }
+    }
+
     // Parses a ".byte" directive's comma-separated argument list into raw bytes. Each item is
-    // either a double-quoted string (each character emitted as its plain character code) or a
-    // $hex/%binary/decimal numeric literal in the 0-255 byte range - symbol references aren't
-    // supported here, keeping this directive's scope to literal data only.
-    private static bool TryParseByteDirective(string argsText, out List<byte>? bytes, out string? error)
+    // either a double-quoted string (each character encoded per the active AsmTextEncoding - see
+    // AsmTextEncoder) or a $hex/%binary/decimal numeric literal in the 0-255 byte range - symbol
+    // references aren't supported here, keeping this directive's scope to literal data only.
+    private static bool TryParseByteDirective(string argsText, AsmTextEncoding encoding, out List<byte>? bytes, out string? error)
     {
         var result = new List<byte>();
         error = null;
@@ -319,7 +511,7 @@ public class AsmLineParser
                 }
 
                 foreach (char c in argsText[start..i])
-                    result.Add((byte)c);
+                    result.Add(AsmTextEncoder.Encode(c, encoding));
                 i++; // consume closing quote
             }
             else

@@ -333,19 +333,32 @@
                         <TreeViewItem Header="General"
                                       Tag="general"
                                       x:Name="TreeGeneral"/>
-                        <TreeViewItem Header="Formatting"
-                                      Tag="formatting"
-                                      x:Name="TreeFormatting"/>
-                        <TreeViewItem Header="Code Analysis"
-                                      Tag="code-analysis"
-                                      x:Name="TreeCodeAnalysis"/>
                     </TreeViewItem>
-                    <TreeViewItem Header="Code"
-                                  Tag="code-minify"
-                                  x:Name="TreeCode">
+                    <TreeViewItem Header="BASIC"
+                                  Tag="basic-formatting"
+                                  x:Name="TreeBasic">
+                        <TreeViewItem Header="Formatting"
+                                      Tag="basic-formatting"
+                                      x:Name="TreeBasicFormatting"/>
+                        <TreeViewItem Header="Code Analysis"
+                                      Tag="basic-code-analysis"
+                                      x:Name="TreeBasicCodeAnalysis"/>
                         <TreeViewItem Header="Minify"
-                                      Tag="code-minify"
-                                      x:Name="TreeMinify"/>
+                                      Tag="basic-minify"
+                                      x:Name="TreeBasicMinify"/>
+                    </TreeViewItem>
+                    <TreeViewItem Header="Assembly"
+                                  Tag="asm-formatting"
+                                  x:Name="TreeAssembly">
+                        <TreeViewItem Header="Formatting"
+                                      Tag="asm-formatting"
+                                      x:Name="TreeAsmFormatting"/>
+                        <TreeViewItem Header="Code Analysis"
+                                      Tag="asm-code-analysis"
+                                      x:Name="TreeAsmCodeAnalysis"/>
+                        <TreeViewItem Header="Assembler"
+                                      Tag="asm-assembler"
+                                      x:Name="TreeAsmAssembler"/>
                     </TreeViewItem>
                     <TreeViewItem Header="Commodore"
                                   Tag="c64u"
@@ -443,13 +456,13 @@
 
                         </StackPanel>
 
-                        <!-- TEXT EDITOR › FORMATTING -->
-                        <StackPanel x:Name="PanelFormatting"
+                        <!-- BASIC › FORMATTING -->
+                        <StackPanel x:Name="PanelBasicFormatting"
                                     Margin="24,20,24,20"
                                     Visibility="Collapsed">
 
                             <TextBlock Style="{StaticResource SectionBreadcrumb}"
-                                       Text="Text Editor  ›  Formatting"/>
+                                       Text="BASIC  ›  Formatting"/>
 
                             <Border Style="{StaticResource SettingRow}">
                                 <StackPanel>
@@ -487,22 +500,22 @@
                                     <TextBlock Style="{StaticResource SettingLabel}"
                                                Text="Column guide position"/>
                                     <TextBlock Style="{StaticResource SettingDesc}"
-                                               Text="Column at which the vertical guide line appears (toggle via View › Column Guide)."/>
+                                               Text="Column at which the vertical guide line appears for BASIC tabs (toggle via View › Column Guide)."/>
                                     <TextBox Width="60"
                                              HorizontalAlignment="Left"
-                                             Text="{Binding WrapColumnText, UpdateSourceTrigger=PropertyChanged}"/>
+                                             Text="{Binding BasicColumnGuideText, UpdateSourceTrigger=PropertyChanged}"/>
                                 </StackPanel>
                             </Border>
 
                         </StackPanel>
 
-                        <!-- TEXT EDITOR › CODE ANALYSIS -->
-                        <StackPanel x:Name="PanelCodeAnalysis"
+                        <!-- BASIC › CODE ANALYSIS -->
+                        <StackPanel x:Name="PanelBasicCodeAnalysis"
                                     Margin="24,20,24,20"
                                     Visibility="Collapsed">
 
                             <TextBlock Style="{StaticResource SectionBreadcrumb}"
-                                       Text="Text Editor  ›  Code Analysis"/>
+                                       Text="BASIC  ›  Code Analysis"/>
 
                             <Border Style="{StaticResource SettingRow}">
                                 <StackPanel>
@@ -528,13 +541,13 @@
 
                         </StackPanel>
 
-                        <!-- CODE › MINIFY -->
-                        <StackPanel x:Name="PanelMinify"
+                        <!-- BASIC › MINIFY -->
+                        <StackPanel x:Name="PanelBasicMinify"
                                     Margin="24,20,24,20"
                                     Visibility="Collapsed">
 
                             <TextBlock Style="{StaticResource SectionBreadcrumb}"
-                                       Text="Code  ›  Minify"/>
+                                       Text="BASIC  ›  Minify"/>
 
                             <Border Style="{StaticResource SettingRowLast}">
                                 <StackPanel>
@@ -568,6 +581,135 @@
                                                   FontSize="12"
                                                   IsChecked="{Binding MinifyRenumberLines}"/>
                                     </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+
+                        <!-- ASSEMBLY › FORMATTING -->
+                        <StackPanel x:Name="PanelAsmFormatting"
+                                    Margin="24,20,24,20"
+                                    Visibility="Collapsed">
+
+                            <TextBlock Style="{StaticResource SectionBreadcrumb}"
+                                       Text="Assembly  ›  Formatting"/>
+
+                            <Border Style="{StaticResource SettingRow}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Mnemonic indent column"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Column mnemonics (LDA, STA, JMP, etc.) are indented to, when not preceded by a label (e.g. 9 for an 8-space indent)."/>
+                                    <TextBox Width="60"
+                                             HorizontalAlignment="Left"
+                                             Text="{Binding AsmMnemonicIndentColumnText, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingRow}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Comment alignment column"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Column inline &quot;;&quot; comments are aligned to."/>
+                                    <TextBox Width="60"
+                                             HorizontalAlignment="Left"
+                                             Text="{Binding AsmCommentAlignColumnText, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingRow}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Column guide position"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Column at which the vertical guide line appears for assembly tabs (toggle via View › Column Guide)."/>
+                                    <TextBox Width="60"
+                                             HorizontalAlignment="Left"
+                                             Text="{Binding AsmColumnGuideText, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingRowLast}">
+                                <StackPanel>
+                                    <CheckBox FontSize="12"
+                                              Content="Auto-indent"
+                                              IsChecked="{Binding AsmAutoIndent}"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Margin="20,2,0,0"
+                                               Text="When enabled, pressing Enter in an assembly tab indents the new line to match the previous one."/>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+
+                        <!-- ASSEMBLY › CODE ANALYSIS -->
+                        <StackPanel x:Name="PanelAsmCodeAnalysis"
+                                    Margin="24,20,24,20"
+                                    Visibility="Collapsed">
+
+                            <TextBlock Style="{StaticResource SectionBreadcrumb}"
+                                       Text="Assembly  ›  Code Analysis"/>
+
+                            <Border Style="{StaticResource SettingRowLast}">
+                                <StackPanel>
+                                    <CheckBox FontSize="12"
+                                              Content="Code folding"
+                                              IsChecked="{Binding AsmEnableCodeFolding}"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Margin="20,2,0,0"
+                                               Text="Allows runs of consecutive full-line &quot;;&quot; comments to be collapsed in the editor."/>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+
+                        <!-- ASSEMBLY › ASSEMBLER -->
+                        <StackPanel x:Name="PanelAsmAssembler"
+                                    Margin="24,20,24,20"
+                                    Visibility="Collapsed">
+
+                            <TextBlock Style="{StaticResource SectionBreadcrumb}"
+                                       Text="Assembly  ›  Assembler"/>
+
+                            <Border Style="{StaticResource SettingRow}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Output"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Choose how assembled code is packaged."/>
+                                    <RadioButton Content="Auto BASIC loader stub (runs on its own with SYS)"
+                                                 GroupName="AsmOutputMode"
+                                                 IsChecked="{Binding IsAsmOutputAuto}"
+                                                 FontSize="12"
+                                                 Margin="0,0,0,6"/>
+                                    <RadioButton Content="Standalone .prg (no loader)"
+                                                 GroupName="AsmOutputMode"
+                                                 IsChecked="{Binding IsAsmOutputStandalone}"
+                                                 FontSize="12"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingRow}">
+                                <StackPanel IsEnabled="{Binding IsAsmOutputStandalone}">
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Default origin address"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Memory address standalone output starts at (e.g. $C000), used when the source has no &quot;.org&quot; directive of its own."/>
+                                    <TextBox Width="80"
+                                             HorizontalAlignment="Left"
+                                             Text="{Binding AsmDefaultOriginAddressText, UpdateSourceTrigger=PropertyChanged}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingRowLast}">
+                                <StackPanel>
+                                    <CheckBox FontSize="12"
+                                              Content="Generate listing file"
+                                              IsChecked="{Binding AsmGenerateListingFile}"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Margin="20,2,0,0"
+                                               Text="Writes a listing file (addresses, raw bytes, and source side by side) alongside the .prg output."/>
                                 </StackPanel>
                             </Border>
 

@@ -2,6 +2,7 @@
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using ReadyCode.Settings;
 
@@ -15,7 +16,15 @@ public class SettingsViewModel : INotifyPropertyChanged
 {
     #region Private Fields
 
-    private string _wrapColumnText;
+    private string _basicColumnGuideText;
+    private string _asmColumnGuideText;
+    private string _asmMnemonicIndentColumnText;
+    private string _asmCommentAlignColumnText;
+    private bool _asmAutoIndent;
+    private bool _asmEnableCodeFolding;
+    private string _asmOutputMode;
+    private string _asmDefaultOriginAddressText;
+    private bool _asmGenerateListingFile;
     private bool _showC64UMenu;
     private string _c64UUrl;
     private bool _showViceMenu;
@@ -53,7 +62,15 @@ public class SettingsViewModel : INotifyPropertyChanged
     {
         _restoreOpenTabsOnStartup = settings.RestoreOpenTabsOnStartup;
         _theme = settings.Theme;
-        _wrapColumnText = settings.ColumnGuideColumn.ToString();
+        _basicColumnGuideText = settings.BasicColumnGuideColumn.ToString();
+        _asmColumnGuideText = settings.AsmColumnGuideColumn.ToString();
+        _asmMnemonicIndentColumnText = settings.AsmMnemonicIndentColumn.ToString();
+        _asmCommentAlignColumnText = settings.AsmCommentAlignColumn.ToString();
+        _asmAutoIndent = settings.AsmAutoIndent;
+        _asmEnableCodeFolding = settings.AsmEnableCodeFolding;
+        _asmOutputMode = settings.AsmOutputMode;
+        _asmDefaultOriginAddressText = "$" + settings.AsmDefaultOriginAddress.ToString("X4");
+        _asmGenerateListingFile = settings.AsmGenerateListingFile;
         _showC64UMenu = settings.ShowC64UMenu;
         _c64UUrl = settings.C64UUrl;
         _showViceMenu = settings.ShowViceMenu;
@@ -160,12 +177,112 @@ public class SettingsViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Gets or sets the column guide column, as entered text, before validation.
+    /// Gets or sets the BASIC column guide column, as entered text, before validation.
     /// </summary>
-    public string WrapColumnText
+    public string BasicColumnGuideText
     {
-        get => _wrapColumnText;
-        set { if (_wrapColumnText == value) return; _wrapColumnText = value; OnPropertyChanged(); }
+        get => _basicColumnGuideText;
+        set { if (_basicColumnGuideText == value) return; _basicColumnGuideText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets the assembly column guide column, as entered text, before validation.
+    /// </summary>
+    public string AsmColumnGuideText
+    {
+        get => _asmColumnGuideText;
+        set { if (_asmColumnGuideText == value) return; _asmColumnGuideText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets the column assembly mnemonics are indented to, as entered text, before
+    /// validation.
+    /// </summary>
+    public string AsmMnemonicIndentColumnText
+    {
+        get => _asmMnemonicIndentColumnText;
+        set { if (_asmMnemonicIndentColumnText == value) return; _asmMnemonicIndentColumnText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets the column inline ";" comments are aligned to in assembly source, as entered
+    /// text, before validation.
+    /// </summary>
+    public string AsmCommentAlignColumnText
+    {
+        get => _asmCommentAlignColumnText;
+        set { if (_asmCommentAlignColumnText == value) return; _asmCommentAlignColumnText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets whether pressing Enter in an assembly tab automatically indents the new line
+    /// to match the previous one.
+    /// </summary>
+    public bool AsmAutoIndent
+    {
+        get => _asmAutoIndent;
+        set { if (_asmAutoIndent == value) return; _asmAutoIndent = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets whether runs of consecutive full-line ";" comments can be collapsed via code
+    /// folding, for an assembly tab.
+    /// </summary>
+    public bool AsmEnableCodeFolding
+    {
+        get => _asmEnableCodeFolding;
+        set { if (_asmEnableCodeFolding == value) return; _asmEnableCodeFolding = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the assembler packages its output as a runnable program with an
+    /// auto-generated BASIC loader stub.
+    /// </summary>
+    public bool IsAsmOutputAuto
+    {
+        get => _asmOutputMode == "Auto";
+        set
+        {
+            if (!value) return;
+            _asmOutputMode = "Auto";
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsAsmOutputStandalone));
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the assembler packages its output as a standalone .prg with no
+    /// BASIC loader stub.
+    /// </summary>
+    public bool IsAsmOutputStandalone
+    {
+        get => _asmOutputMode == "Standalone";
+        set
+        {
+            if (!value) return;
+            _asmOutputMode = "Standalone";
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsAsmOutputAuto));
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the default origin address for standalone assembler output, as entered hex
+    /// text (e.g. "$C000"), before validation.
+    /// </summary>
+    public string AsmDefaultOriginAddressText
+    {
+        get => _asmDefaultOriginAddressText;
+        set { if (_asmDefaultOriginAddressText == value) return; _asmDefaultOriginAddressText = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the assembler also writes a listing file alongside its .prg output.
+    /// </summary>
+    public bool AsmGenerateListingFile
+    {
+        get => _asmGenerateListingFile;
+        set { if (_asmGenerateListingFile == value) return; _asmGenerateListingFile = value; OnPropertyChanged(); }
     }
 
     /// <summary>
@@ -369,8 +486,17 @@ public class SettingsViewModel : INotifyPropertyChanged
     /// </summary>
     public string? Validate()
     {
-        if (!int.TryParse(WrapColumnText, out int column) || column < 1)
-            return "Please enter a whole number greater than zero for the wrap column.";
+        if (!int.TryParse(BasicColumnGuideText, out int basicColumn) || basicColumn < 1)
+            return "Please enter a whole number greater than zero for the BASIC column guide.";
+
+        if (!int.TryParse(AsmColumnGuideText, out int asmColumn) || asmColumn < 1)
+            return "Please enter a whole number greater than zero for the assembly column guide.";
+
+        if (!int.TryParse(AsmMnemonicIndentColumnText, out int mnemonicIndent) || mnemonicIndent < 1)
+            return "Please enter a whole number greater than zero for the mnemonic indent column.";
+
+        if (!int.TryParse(AsmCommentAlignColumnText, out int commentAlign) || commentAlign < 1)
+            return "Please enter a whole number greater than zero for the comment alignment column.";
 
         string url = C64UUrl.Trim();
         if (!string.IsNullOrEmpty(url) && !Uri.TryCreate(url, UriKind.Absolute, out _))
@@ -385,6 +511,9 @@ public class SettingsViewModel : INotifyPropertyChanged
         if (!int.TryParse(EditorFontSizeText, out int fontSize) || fontSize < 6 || fontSize > 72)
             return "Please enter a font size between 6 and 72.";
 
+        if (!TryParseHexAddress(AsmDefaultOriginAddressText, out _))
+            return "Please enter a valid hex address (e.g. $C000) for the default origin, between $0000 and $FFFF.";
+
         if (!int.TryParse(ViceMonitorPortText, out int monitorPort) || monitorPort < 1 || monitorPort > 65535)
             return "Please enter a valid port number (1-65535) for the VICE monitor port.";
 
@@ -398,7 +527,16 @@ public class SettingsViewModel : INotifyPropertyChanged
     {
         settings.RestoreOpenTabsOnStartup = _restoreOpenTabsOnStartup;
         settings.Theme = _theme;
-        settings.ColumnGuideColumn = int.Parse(WrapColumnText);
+        settings.BasicColumnGuideColumn = int.Parse(BasicColumnGuideText);
+        settings.AsmColumnGuideColumn = int.Parse(AsmColumnGuideText);
+        settings.AsmMnemonicIndentColumn = int.Parse(AsmMnemonicIndentColumnText);
+        settings.AsmCommentAlignColumn = int.Parse(AsmCommentAlignColumnText);
+        settings.AsmAutoIndent = AsmAutoIndent;
+        settings.AsmEnableCodeFolding = AsmEnableCodeFolding;
+        settings.AsmOutputMode = _asmOutputMode;
+        TryParseHexAddress(AsmDefaultOriginAddressText, out int originAddress);
+        settings.AsmDefaultOriginAddress = originAddress;
+        settings.AsmGenerateListingFile = AsmGenerateListingFile;
         settings.ShowC64UMenu = ShowC64UMenu;
         settings.C64UUrl = C64UUrl.Trim();
         settings.ShowViceMenu = ShowViceMenu;
@@ -438,6 +576,18 @@ public class SettingsViewModel : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    // Accepts an optional leading "$" (e.g. "$C000" or "C000"), same convention as
+    // DisassemblyToolbarControl's address boxes.
+    private static bool TryParseHexAddress(string text, out int value)
+    {
+        string trimmed = text.Trim();
+        if (trimmed.StartsWith('$')) trimmed = trimmed[1..];
+
+        bool ok = ushort.TryParse(trimmed, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort address);
+        value = address;
+        return ok;
     }
 
     #endregion

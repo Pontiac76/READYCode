@@ -828,9 +828,10 @@
                 <MenuItem Header="M_ake Uppercase" Command="{Binding EditMakeUppercaseCommand}" InputGestureText="Ctrl+Shift+U"/>
                 <MenuItem Header="Make _Lowercase" Command="{Binding EditMakeLowercaseCommand}"/>
                 <Separator/>
-                <MenuItem Header="Minif_y Code"   Command="{Binding EditMinifyCommand}"   InputGestureText="Ctrl+M"/>
-                <MenuItem Header="Prett_ify Code" Command="{Binding EditPrettifyCommand}" InputGestureText="Ctrl+Shift+M"/>
-                <MenuItem Header="Renu_mber Code" Command="{Binding EditRenumberCommand}" InputGestureText="Ctrl+R"/>
+                <MenuItem x:Name="MinifyMenuItem"   Header="Minif_y Code"   Command="{Binding EditMinifyCommand}"   InputGestureText="Ctrl+M"/>
+                <MenuItem x:Name="PrettifyMenuItem" Header="Prett_ify Code" Command="{Binding EditPrettifyCommand}" InputGestureText="Ctrl+Shift+M"/>
+                <MenuItem x:Name="RenumberMenuItem" Header="Renu_mber Code" Command="{Binding EditRenumberCommand}" InputGestureText="Ctrl+R"/>
+                <MenuItem x:Name="FormatMenuItem"   Header="_Format Code"   Command="{Binding EditFormatCommand}"   InputGestureText="Ctrl+K Ctrl+F" Visibility="Collapsed"/>
                 <Separator/>
                 <MenuItem Header="_Find"    Command="{Binding EditFindCommand}"    InputGestureText="Ctrl+F">
                     <MenuItem.Icon><TextBlock Text="&#xE721;" Style="{StaticResource MenuItemIconText}"/></MenuItem.Icon>
@@ -885,6 +886,8 @@
                 <MenuItem Header="_Pause"     Command="{Binding ViewModel.C64UPauseCommand}"/>
                 <MenuItem Header="Res_ume"    Command="{Binding ViewModel.C64UResumeCommand}"/>
                 <MenuItem Header="Power _Off" Command="{Binding ViewModel.C64UPowerOffCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Disassemble at..." Click="C64UDisassemble_Click"/>
                 <Separator/>
                 <MenuItem Header="_About My C64U" Command="{Binding ViewModel.C64USystemInfoCommand}"/>
             </MenuItem>
@@ -1990,25 +1993,36 @@
                            Opacity="0.5"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Visibility="Visible"/>
-                    <avalonEdit:TextEditor x:Name="Editor"
-                             Margin="0"
-                             Padding="10"
-                             FontFamily="../Assets/Fonts/#Pet Me 64"
-                             FontSize="16"
-                             Foreground="#000000"
-                             Background="{DynamicResource ThemeEditorBg}"
-                             WordWrap="False"
-                             ShowLineNumbers="False"
-                             HorizontalScrollBarVisibility="Auto"
-                             VerticalScrollBarVisibility="Auto"
-                             ContextMenu="{StaticResource EditorContextMenu}"
-                             TextChanged="Editor_TextChanged"
-                             PreviewKeyDown="Editor_PreviewKeyDown"
-                             PreviewTextInput="Editor_PreviewTextInput"
-                             MouseHover="Editor_MouseHover"
-                             MouseHoverStopped="Editor_MouseHoverStopped"
-                             PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"
-                             Visibility="Collapsed"/>
+                    <!-- Groups the disassembly toolbar with Editor so the toolbar occupies a fixed
+                         strip above the text rather than overlapping it - EditorContainer's own
+                         Visibility (not Editor's) is what ActivateTab toggles for a text tab now,
+                         so the toolbar hides/shows independently via DisassemblyToolbar.Visibility. -->
+                    <Grid x:Name="EditorContainer" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <local:DisassemblyToolbarControl x:Name="DisassemblyToolbar" Grid.Row="0"
+                                 DisassembleRequested="DisassemblyToolbar_DisassembleRequested"/>
+                        <avalonEdit:TextEditor x:Name="Editor" Grid.Row="1"
+                                 Margin="0"
+                                 Padding="10"
+                                 FontFamily="../Assets/Fonts/#Pet Me 64"
+                                 FontSize="16"
+                                 Foreground="#000000"
+                                 Background="{DynamicResource ThemeEditorBg}"
+                                 WordWrap="False"
+                                 ShowLineNumbers="False"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Auto"
+                                 ContextMenu="{StaticResource EditorContextMenu}"
+                                 TextChanged="Editor_TextChanged"
+                                 PreviewKeyDown="Editor_PreviewKeyDown"
+                                 PreviewTextInput="Editor_PreviewTextInput"
+                                 MouseHover="Editor_MouseHover"
+                                 MouseHoverStopped="Editor_MouseHoverStopped"
+                                 PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"/>
+                    </Grid>
                     <local:HexEditorControl x:Name="HexEditor" ContextMenu="{StaticResource HexEditorContextMenu}"/>
                     <local:FindBarControl x:Name="FindBar"
                                          HorizontalAlignment="Right"

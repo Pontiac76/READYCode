@@ -54,10 +54,50 @@ public class AppSettings
     public bool ShowColumnGuide { get; set; } = true;
 
     /// <summary>
-    /// The column at which to show the vertical column guide line
+    /// The column at which to show the vertical column guide line for a BASIC tab
     /// (e.g. 40 for the C64, 22 for the VIC-20).
     /// </summary>
-    public int ColumnGuideColumn { get; set; } = 40;
+    public int BasicColumnGuideColumn { get; set; } = 40;
+
+    /// <summary>
+    /// The column at which to show the vertical column guide line for an assembly tab.
+    /// </summary>
+    public int AsmColumnGuideColumn { get; set; } = 80;
+
+    /// <summary>
+    /// The column assembly mnemonics are indented to (e.g. 9 for an 8-space indent).
+    /// </summary>
+    public int AsmMnemonicIndentColumn { get; set; } = 9;
+
+    /// <summary>
+    /// The column inline ";" comments are aligned to in assembly source.
+    /// </summary>
+    public int AsmCommentAlignColumn { get; set; } = 32;
+
+    /// <summary>
+    /// Whether pressing Enter in an assembly tab automatically indents the new line to match the
+    /// previous one.
+    /// </summary>
+    public bool AsmAutoIndent { get; set; } = true;
+
+    /// <summary>
+    /// How the assembler packages its output: "Auto" (a tiny BASIC loader stub, so the result
+    /// runs on its own with SYS) or "Standalone" (a raw .prg with no loader, starting at
+    /// <see cref="AsmDefaultOriginAddress"/> unless the source has its own ".org").
+    /// </summary>
+    public string AsmOutputMode { get; set; } = "Auto";
+
+    /// <summary>
+    /// The memory address standalone assembler output starts at when the source has no ".org"
+    /// directive of its own. Only used when <see cref="AsmOutputMode"/> is "Standalone".
+    /// </summary>
+    public int AsmDefaultOriginAddress { get; set; } = 0xC000;
+
+    /// <summary>
+    /// Whether the assembler also writes a listing file (addresses, raw bytes, and source side by
+    /// side) alongside its .prg output.
+    /// </summary>
+    public bool AsmGenerateListingFile { get; set; } = false;
 
     /// <summary>
     /// Number of digits to zero-pad line numbers to (e.g. 4 -> 0010, 0020). 0 disables padding.
@@ -155,9 +195,16 @@ public class AppSettings
     public bool EnableLinting { get; set; } = true;
 
     /// <summary>
-    /// Whether FOR/NEXT and multi-line REM statements can be collapsed via code folding.
+    /// Whether FOR/NEXT and multi-line REM statements can be collapsed via code folding, for
+    /// a BASIC tab.
     /// </summary>
     public bool EnableCodeFolding { get; set; } = true;
+
+    /// <summary>
+    /// Whether runs of consecutive full-line ";" comments can be collapsed via code folding, for
+    /// an assembly tab.
+    /// </summary>
+    public bool AsmEnableCodeFolding { get; set; } = true;
 
     /// <summary>
     /// Remembers the left position of the main window. Left and Top are

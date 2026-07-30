@@ -19,6 +19,8 @@ Enter your C64 Ultimate's URL once in **Preferences > Settings... > Commodore > 
 
 If automatic minification is enabled in Preferences, your program is minified before it is sent, keeping your working copy untouched while sending a compact version to the machine. See [Minify and Prettify](minify-and-prettify.md).
 
+For a standalone assembly program (Assembly > Assembler's **Output** set to Standalone, or any source with its own `.org`), "starts it immediately" doesn't just mean the device's own load-and-run - there's no BASIC program in memory for that to run. Instead, READYCode loads the program without running it, waits briefly for the machine to finish resetting, then simulates typing `SYS <origin>` and Enter directly into the keyboard buffer, the same trick real loader hardware uses to launch non-BASIC code after a DMA load.
+
 ### Machine control
 
 The C64U menu also offers direct machine control: Reset, Reboot, Pause, Resume, and Power Off, plus an **About My C64U** dialog showing device information. These all talk to the Ultimate's own local [REST API](https://1541u-documentation.readthedocs.io/en/latest/api/api_calls.html):
@@ -27,6 +29,7 @@ The C64U menu also offers direct machine control: Reset, Reboot, Pause, Resume, 
 | --- | --- |
 | Load without running | `POST /v1/runners:load_prg` |
 | Load and run | `POST /v1/runners:run_prg` |
+| Type a "SYS" command for standalone output (see above) | `PUT /v1/machine:writemem` |
 | Device info | `GET /v1/info` |
 | Machine control | `PUT /v1/machine:{action}` |
 | List drive status | `GET /v1/drives` |

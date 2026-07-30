@@ -93,6 +93,24 @@ public class EditorTab : INotifyPropertyChanged
     public EditorLanguage Language { get; set; } = EditorLanguage.Basic;
 
     /// <summary>
+    /// Gets or sets whether this tab shows a read-only disassembly listing, generated from a
+    /// live memory read rather than opened from a file. The editor stays read-only and the
+    /// address-range toolbar stays visible while this is true; saving the tab (which requires
+    /// choosing a real file path) clears it, turning the tab into an ordinary editable
+    /// <c>.asm</c> tab from then on - see <c>MainWindow.FileSaveAs_Click</c>.
+    /// </summary>
+    public bool IsDisassemblyMode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the memory address each document line represents, keyed by 1-based line
+    /// number, while <see cref="IsDisassemblyMode"/> is true - fed to
+    /// <see cref="ReadyCode.Editor.AsmLineNumberMargin.LineAddresses"/> when this tab is active,
+    /// so the gutter shows real addresses instead of sequential line numbers. Null once
+    /// disassembly mode is cleared (see <c>MainWindow.FileSaveAs_Click</c>).
+    /// </summary>
+    public IReadOnlyDictionary<int, ushort>? DisassemblyLineAddresses { get; set; }
+
+    /// <summary>
     /// Gets the display file name, falling back to <see cref="DisplayName"/> or "Untitled"
     /// if the tab has no <see cref="FilePath"/>.
     /// </summary>

@@ -58,12 +58,19 @@ public static class AsmSymbolIndex
             if (line.ConstantName != null)
                 occurrences.Add(new AsmSymbolOccurrence(line.ConstantName, line.LineNumber, AsmSymbolKind.ConstantDefinition));
 
-            if (line.SymbolName != null)
+            // "*" (the current-address pseudo-symbol - see AsmLineParser.TryParseValue) isn't a
+            // real symbol, so it's excluded here in every position it can appear: an operand/
+            // ".word" entry's SymbolName, and a constant's OffsetSymbolName (e.g. the "start" in
+            // "size = * - start", where "start" - unlike "*" - is a real reference worth indexing).
+            if (line.SymbolName != null && line.SymbolName != "*")
                 occurrences.Add(new AsmSymbolOccurrence(line.SymbolName, line.LineNumber, AsmSymbolKind.Reference));
+
+            if (line.OffsetSymbolName != null && line.OffsetSymbolName != "*")
+                occurrences.Add(new AsmSymbolOccurrence(line.OffsetSymbolName, line.LineNumber, AsmSymbolKind.Reference));
 
             if (line.WordData != null)
                 foreach (var entry in line.WordData)
-                    if (entry.SymbolName != null)
+                    if (entry.SymbolName != null && entry.SymbolName != "*")
                         occurrences.Add(new AsmSymbolOccurrence(entry.SymbolName, line.LineNumber, AsmSymbolKind.Reference));
         }
 

@@ -48,6 +48,13 @@ public class MainViewModel : INotifyPropertyChanged
     private EditorTab? _activeTab;
     private readonly SourcePrinter _printer = new();
 
+    // How long to wait after a C64U load_prg (which itself triggers a machine reset) before
+    // stuffing the keyboard buffer with a "SYS <origin>" command - needs to be long enough for
+    // the KERNAL's cold-start/BASIC-ready sequence to finish and start reading the keyboard
+    // buffer again, or the typed command is silently lost. Not user-configurable (yet) - if this
+    // turns out to be too short/long on real hardware, it's the first thing to tune.
+    private static readonly TimeSpan _c64uSysCommandDelay = TimeSpan.FromSeconds(0.5);
+
     #endregion
 
     #region Constructors
@@ -1032,7 +1039,7 @@ public class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryBuildPrgData(text, out byte[]? prgData))
+        if (!TryBuildPrgData(text, out byte[]? prgData, out _))
             return;
 
         try
@@ -1066,18 +1073,37 @@ public class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryBuildPrgData(text, out byte[]? prgData))
+        if (!TryBuildPrgData(text, out byte[]? prgData, out AssemblyResult? asmResult))
             return;
 
         try
         {
             var client = new C64UltimateClient();
 
-            SetStatus("Transferring program to C64 Ultimate…");
+            if (asmResult is { HasExplicitOrigin: true })
+            {
+                // Standalone machine code (an explicit ".org", no auto-generated BASIC loader
+                // stub) - the C64U's run_prg endpoint just issues a plain BASIC RUN after loading,
+                // which does nothing useful with no BASIC program in memory. Load without running
+                // instead, then simulate typing "SYS <origin>" once the machine has settled back
+                // at the READY prompt from the reset load_prg itself triggers - the same trick
+                // real loader carts use to launch non-BASIC code from a DMA load.
+                SetStatus("Transferring program to C64 Ultimate…");
+                await client.LoadPrgAsync(Settings.C64UUrl, prgData!);
 
-            await client.RunPrgAsync(Settings.C64UUrl, prgData!);
+                await Task.Delay(_c64uSysCommandDelay);
+                await client.TypeAsync(Settings.C64UUrl, $"SYS{asmResult.Origin}\r");
 
-            SetStatus("Program transferred and running on the C64 Ultimate.", StatusType.Info);
+                SetStatus($"Program transferred and running on the C64 Ultimate (SYS{asmResult.Origin}).", StatusType.Info);
+            }
+            else
+            {
+                SetStatus("Transferring program to C64 Ultimate…");
+
+                await client.RunPrgAsync(Settings.C64UUrl, prgData!);
+
+                SetStatus("Program transferred and running on the C64 Ultimate.", StatusType.Info);
+            }
         }
         catch (Exception ex)
         {
@@ -1102,7 +1128,7 @@ public class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryBuildPrgData(text, out byte[]? prgData))
+        if (!TryBuildPrgData(text, out byte[]? prgData, out _))
             return;
 
         try
@@ -1136,7 +1162,7 @@ public class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        if (!TryBuildPrgData(text, out byte[]? prgData))
+        if (!TryBuildPrgData(text, out byte[]? prgData, out _))
             return;
 
         try
@@ -1155,15 +1181,20 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    // Builds the .prg bytes to send to VICE: assembles machine code for an Asm tab, or tokenizes
-    // BASIC otherwise. On assembly failure, shows every error in a dialog and returns false
-    // without ever constructing a ViceClient, keeping "assembly failed" distinct from "transfer
-    // failed".
-    private bool TryBuildPrgData(string text, out byte[]? prgData)
+    // Builds the .prg bytes to send to VICE or the C64U: assembles machine code for an Asm tab, or
+    // tokenizes BASIC otherwise. On assembly failure, shows every error in a dialog and returns
+    // false without ever constructing a client, keeping "assembly failed" distinct from "transfer
+    // failed". Also hands back the AssemblyResult itself (null for a BASIC tab) so a caller that
+    // cares - see RunCurrentProgramAsync - can check HasExplicitOrigin/Origin without assembling
+    // the source a second time.
+    private bool TryBuildPrgData(string text, out byte[]? prgData, out AssemblyResult? asmResult)
     {
+        asmResult = null;
+
         if (ActiveTab!.Language == EditorLanguage.Asm)
         {
-            var asmResult = new Asm6502Assembler().Assemble(text);
+            asmResult = new Asm6502Assembler().Assemble(
+                text, Settings.AsmOutputMode == "Standalone", (ushort)Settings.AsmDefaultOriginAddress);
             if (!asmResult.Success)
             {
                 MessageBox.Show(
@@ -1175,12 +1206,31 @@ public class MainViewModel : INotifyPropertyChanged
             }
 
             prgData = asmResult.PrgBytes;
+            if (Settings.AsmGenerateListingFile && !string.IsNullOrEmpty(ActiveTab.FilePath))
+                TryWriteListingFile(text, asmResult, ActiveTab.FilePath);
+
             return true;
         }
 
         var converter = new PrgConverter();
         prgData = converter.ConvertToPrg(PrepareCodeForTransfer(text));
         return true;
+    }
+
+    // Writes a listing file next to the source whenever a Transfer/Run assembles it - see
+    // AppSettings.AsmGenerateListingFile. Best-effort: a write failure here shouldn't block the
+    // transfer/run the user actually asked for, so it's only reflected in the status bar.
+    private void TryWriteListingFile(string source, AssemblyResult asmResult, string sourceFilePath)
+    {
+        try
+        {
+            string listingPath = Path.ChangeExtension(sourceFilePath, ".lst");
+            File.WriteAllText(listingPath, AsmListingWriter.Generate(source, asmResult));
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Assembled successfully, but the listing file could not be written: {ex.Message}", StatusType.Warning);
+        }
     }
 
     // Performs a machine action (reset, reboot, pause, resume, poweroff) on VICE via its binary monitor.
