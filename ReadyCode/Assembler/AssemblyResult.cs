@@ -56,8 +56,8 @@ public class AssemblyResult
 
     /// <summary>
     /// Gets or sets the address and bytes each source line assembled to, in source order - used
-    /// by <see cref="AsmListingWriter"/> to generate a listing file. Empty unless
-    /// <see cref="Success"/> is true.
+    /// to show real memory addresses in the editor's gutter (see
+    /// <c>MainWindow.UpdateAsmGutterAddresses</c>). Empty unless <see cref="Success"/> is true.
     /// </summary>
     public IReadOnlyList<AsmListingEntry> ListingEntries { get; set; } = [];
 

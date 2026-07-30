@@ -4,9 +4,10 @@
 namespace ReadyCode.Assembler;
 
 /// <summary>
-/// The bytes a single source line assembled to, for generating a listing file (see
-/// <see cref="AsmListingWriter"/>). Only lines that actually emit bytes (mnemonics, ".byte",
-/// ".word") get an entry - labels, comments, blank lines, constants, and ".org" don't.
+/// The bytes a single source line assembled to - used to show real memory addresses in the
+/// editor's gutter (see <c>MainWindow.UpdateAsmGutterAddresses</c>). Only lines that actually emit
+/// bytes (mnemonics, ".byte", ".word") get an entry - labels, comments, blank lines, constants,
+/// and ".org" don't.
 /// </summary>
 /// <param name="LineNumber">1-based source line this entry covers.</param>
 /// <param name="Address">The memory address the line's first byte was assembled to.</param>

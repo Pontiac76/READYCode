@@ -55,8 +55,6 @@ How a program is packaged depends on whether the source uses `.org`, and on the 
 
 Standalone/raw output is the typical choice for code that needs to load at a specific address, such as sprite or character data, or a program meant to be called from elsewhere rather than run directly.
 
-If **Generate listing file** is also enabled, transferring or running a saved assembly tab writes a `.lst` file next to it, showing the address and assembled bytes for each source line alongside the original source.
-
 ## Diagnostics
 
 The editor runs the real assembler in the background as you type and reports any problem as a squiggle underline: duplicate labels or constants, undefined labels, invalid addressing modes, branches that are out of range, operand overflow, and malformed `.org` usage among them. Hover over a squiggle to see the specific error.

@@ -690,7 +690,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <Border Style="{StaticResource SettingRow}">
+                            <Border Style="{StaticResource SettingRowLast}">
                                 <StackPanel IsEnabled="{Binding IsAsmOutputStandalone}">
                                     <TextBlock Style="{StaticResource SettingLabel}"
                                                Text="Default origin address"/>
@@ -699,17 +699,6 @@
                                     <TextBox Width="80"
                                              HorizontalAlignment="Left"
                                              Text="{Binding AsmDefaultOriginAddressText, UpdateSourceTrigger=PropertyChanged}"/>
-                                </StackPanel>
-                            </Border>
-
-                            <Border Style="{StaticResource SettingRowLast}">
-                                <StackPanel>
-                                    <CheckBox FontSize="12"
-                                              Content="Generate listing file"
-                                              IsChecked="{Binding AsmGenerateListingFile}"/>
-                                    <TextBlock Style="{StaticResource SettingDesc}"
-                                               Margin="20,2,0,0"
-                                               Text="Writes a listing file (addresses, raw bytes, and source side by side) alongside the .prg output."/>
                                 </StackPanel>
                             </Border>
 

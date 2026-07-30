@@ -1206,31 +1206,12 @@ public class MainViewModel : INotifyPropertyChanged
             }
 
             prgData = asmResult.PrgBytes;
-            if (Settings.AsmGenerateListingFile && !string.IsNullOrEmpty(ActiveTab.FilePath))
-                TryWriteListingFile(text, asmResult, ActiveTab.FilePath);
-
             return true;
         }
 
         var converter = new PrgConverter();
         prgData = converter.ConvertToPrg(PrepareCodeForTransfer(text));
         return true;
-    }
-
-    // Writes a listing file next to the source whenever a Transfer/Run assembles it - see
-    // AppSettings.AsmGenerateListingFile. Best-effort: a write failure here shouldn't block the
-    // transfer/run the user actually asked for, so it's only reflected in the status bar.
-    private void TryWriteListingFile(string source, AssemblyResult asmResult, string sourceFilePath)
-    {
-        try
-        {
-            string listingPath = Path.ChangeExtension(sourceFilePath, ".lst");
-            File.WriteAllText(listingPath, AsmListingWriter.Generate(source, asmResult));
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Assembled successfully, but the listing file could not be written: {ex.Message}", StatusType.Warning);
-        }
     }
 
     // Performs a machine action (reset, reboot, pause, resume, poweroff) on VICE via its binary monitor.

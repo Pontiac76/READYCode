@@ -94,12 +94,6 @@ public class AppSettings
     public int AsmDefaultOriginAddress { get; set; } = 0xC000;
 
     /// <summary>
-    /// Whether the assembler also writes a listing file (addresses, raw bytes, and source side by
-    /// side) alongside its .prg output.
-    /// </summary>
-    public bool AsmGenerateListingFile { get; set; } = false;
-
-    /// <summary>
     /// Number of digits to zero-pad line numbers to (e.g. 4 -> 0010, 0020). 0 disables padding.
     /// </summary>
     public int LineNumberPadding { get; set; } = 4;

@@ -43,7 +43,6 @@ READYCode's settings live in one place: **Preferences > Settings...**, organized
 
 - **Output** - whether assembled code is packaged as a runnable program with an auto-generated BASIC loader stub ("Auto"), or as a standalone `.prg` with no loader ("Standalone"). Applies whenever a tab is transferred or run on the C64 Ultimate or VICE, and to the Code Statistics and Symbol Explorer's assembled-byte/address figures. An explicit `.org` directive in the source always wins over this setting.
 - **Default origin address** - the memory address standalone output starts at (e.g. `$C000`), used when the source has no `.org` directive of its own.
-- **Generate listing file** - when enabled, transferring or running an assembly tab that has been saved to disk also writes a `.lst` file next to it, showing the address and bytes each source line assembled to alongside the original source. A write failure here doesn't block the transfer/run itself - only a status bar warning.
 
 ## Commodore > Commodore 64 Ultimate
 

@@ -24,7 +24,6 @@ public class SettingsViewModel : INotifyPropertyChanged
     private bool _asmEnableCodeFolding;
     private string _asmOutputMode;
     private string _asmDefaultOriginAddressText;
-    private bool _asmGenerateListingFile;
     private bool _showC64UMenu;
     private string _c64UUrl;
     private bool _showViceMenu;
@@ -70,7 +69,6 @@ public class SettingsViewModel : INotifyPropertyChanged
         _asmEnableCodeFolding = settings.AsmEnableCodeFolding;
         _asmOutputMode = settings.AsmOutputMode;
         _asmDefaultOriginAddressText = "$" + settings.AsmDefaultOriginAddress.ToString("X4");
-        _asmGenerateListingFile = settings.AsmGenerateListingFile;
         _showC64UMenu = settings.ShowC64UMenu;
         _c64UUrl = settings.C64UUrl;
         _showViceMenu = settings.ShowViceMenu;
@@ -274,15 +272,6 @@ public class SettingsViewModel : INotifyPropertyChanged
     {
         get => _asmDefaultOriginAddressText;
         set { if (_asmDefaultOriginAddressText == value) return; _asmDefaultOriginAddressText = value; OnPropertyChanged(); }
-    }
-
-    /// <summary>
-    /// Gets or sets whether the assembler also writes a listing file alongside its .prg output.
-    /// </summary>
-    public bool AsmGenerateListingFile
-    {
-        get => _asmGenerateListingFile;
-        set { if (_asmGenerateListingFile == value) return; _asmGenerateListingFile = value; OnPropertyChanged(); }
     }
 
     /// <summary>
@@ -536,7 +525,6 @@ public class SettingsViewModel : INotifyPropertyChanged
         settings.AsmOutputMode = _asmOutputMode;
         TryParseHexAddress(AsmDefaultOriginAddressText, out int originAddress);
         settings.AsmDefaultOriginAddress = originAddress;
-        settings.AsmGenerateListingFile = AsmGenerateListingFile;
         settings.ShowC64UMenu = ShowC64UMenu;
         settings.C64UUrl = C64UUrl.Trim();
         settings.ShowViceMenu = ShowViceMenu;
