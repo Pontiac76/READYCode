@@ -40,7 +40,14 @@ public static class FileClassifier
                 if (readPrgBytes == null) return C64UFileKind.Prg;
                 try
                 {
-                    return new PrgConverter().IsBasicProgram(readPrgBytes()) ? C64UFileKind.Prg : C64UFileKind.Ml;
+                    byte[] bytes = readPrgBytes();
+
+                    // An empty file (e.g. a brand-new blank .prg from "New File...") has no
+                    // machine code to speak of - IsBasicProgram would call it "Ml" purely because
+                    // it's too short to validate as a BASIC line chain, which is misleading.
+                    if (bytes.Length == 0) return C64UFileKind.Prg;
+
+                    return new PrgConverter().IsBasicProgram(bytes) ? C64UFileKind.Prg : C64UFileKind.Ml;
                 }
                 catch
                 {

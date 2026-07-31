@@ -53,8 +53,10 @@ public class MainViewModel : INotifyPropertyChanged
     // command, since both trigger a machine reset first. Needs to be long enough for the
     // KERNAL's cold-start/BASIC-ready sequence to finish and start reading the keyboard buffer
     // again, or the typed command is silently lost. Not user-configurable (yet) - if this turns
-    // out to be too short/long, it's the first thing to tune.
-    private static readonly TimeSpan _sysCommandDelay = TimeSpan.FromSeconds(0.5);
+    // out to be too short/long, it's the first thing to tune. Internal (not private) so
+    // MainWindow's own file-tree Load/Run handlers - which apply the same SYS trick to a file
+    // that isn't necessarily the active tab - share this exact same value.
+    internal static readonly TimeSpan SysCommandDelay = TimeSpan.FromSeconds(0.5);
 
     #endregion
 
@@ -889,56 +891,6 @@ public class MainViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>
-    /// Transfers already-tokenized PRG data to the C64 Ultimate and runs it.
-    /// </summary>
-    /// <param name="prgData">The PRG-format program data to run.</param>
-    public async Task RunOnC64UAsync(byte[] prgData)
-    {
-        if (string.IsNullOrWhiteSpace(Settings.C64UUrl))
-        {
-            SetStatus("Please set the Commodore 64 Ultimate URL in Settings - Preferences first.", StatusType.Error);
-            return;
-        }
-
-        try
-        {
-            var client = new C64UltimateClient();
-            SetStatus("Transferring program to C64 Ultimate…");
-            await client.RunPrgAsync(Settings.C64UUrl, prgData);
-            SetStatus("Program transferred and running on the C64 Ultimate.", StatusType.Info);
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Transfer/program execution failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
-    /// <summary>
-    /// Transfers already-tokenized PRG data to the C64 Ultimate without running it.
-    /// </summary>
-    /// <param name="prgData">The PRG-format program data to load.</param>
-    public async Task LoadOnC64UAsync(byte[] prgData)
-    {
-        if (string.IsNullOrWhiteSpace(Settings.C64UUrl))
-        {
-            SetStatus("C64U URL not set. Go to Preferences > Settings to configure it.");
-            return;
-        }
-
-        try
-        {
-            var client = new C64UltimateClient();
-            SetStatus("Transferring program to C64 Ultimate…");
-            await client.LoadPrgAsync(Settings.C64UUrl, prgData);
-            SetStatus("Program transferred to C64 Ultimate successfully.");
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
     #endregion
 
     #region Interface Implementations
@@ -1093,7 +1045,7 @@ public class MainViewModel : INotifyPropertyChanged
                 SetStatus("Transferring program to C64 Ultimate…");
                 await client.LoadPrgAsync(Settings.C64UUrl, prgData!);
 
-                await Task.Delay(_sysCommandDelay);
+                await Task.Delay(SysCommandDelay);
                 await client.TypeAsync(Settings.C64UUrl, $"SYS{asmResult!.Origin}\r");
 
                 SetStatus($"Program transferred and running on the C64 Ultimate (SYS{asmResult.Origin}).", StatusType.Info);
@@ -1182,7 +1134,7 @@ public class MainViewModel : INotifyPropertyChanged
                 SetStatus("Transferring program to VICE…");
                 await client.TransferAsync(Settings.ViceEmulatorPath, prgData!, ActiveTab!.FileName, Settings.ViceBringToForeground);
 
-                await Task.Delay(_sysCommandDelay);
+                await Task.Delay(SysCommandDelay);
                 await client.TypeAsync($"SYS{asmResult!.Origin}\r");
 
                 SetStatus($"Program transferred and running on VICE (SYS{asmResult.Origin}).", StatusType.Info);

@@ -119,6 +119,9 @@ public partial class MainWindow : Window
     private Point _dragStartPoint;
     private FileTreeItem? _dragItem;
     private FileTreeItem? _currentDropTarget;
+    private Point _c64uDragStartPoint;
+    private C64UFileItem? _c64uDragItem;
+    private C64UFileItem? _c64uCurrentDropTarget;
 
     #endregion
 
@@ -228,7 +231,7 @@ public partial class MainWindow : Window
         Editor.TextArea.SelectionChanged += Editor_SelectionChanged;
         Editor.TextArea.Caret.PositionChanged += Editor_CaretPositionChanged;
 
-        ApplyLineTransformersForLanguage(EditorLanguage.Basic);
+        ApplyLineTransformersForLanguage(EditorLanguage.Basic, C64UFileKind.Bas);
         _currentLineBorderRenderer = new CurrentLineBorderRenderer(Editor);
         Editor.TextArea.TextView.BackgroundRenderers.Add(_currentLineBorderRenderer);
         _errorSquiggleRenderer = new ErrorSquiggleRenderer(Editor);
@@ -740,6 +743,242 @@ public partial class MainWindow : Window
         ActivateTab(tab);
     }
 
+    private enum TransferTarget { Vice, C64U }
+
+    // "Load"/"Run" on C64U/VICE for a local top-level .prg/.ml/.asm file.
+    private async void FileContextLoadC64U_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void FileContextLoadVice_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void FileContextRunC64U_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void FileContextRunVice_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task FileContextLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetContextItem(sender);
+        if (item == null) return;
+
+        try
+        {
+            byte[] bytes = File.ReadAllBytes(item.FullPath);
+            await LoadOrRunFileAsync(bytes, item.Kind, item.Name, target, run);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error reading file: {ex.Message}", "Load/Run File", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // "Load"/"Run" on C64U/VICE for a .prg/.ml/.asm entry inside a mounted .d64/.d81 in the
+    // Explorer tree; its content is already in memory from when the disk image was expanded.
+    private async void LocalDiskEntryContextLoadC64U_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void LocalDiskEntryContextLoadVice_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void LocalDiskEntryContextRunC64U_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void LocalDiskEntryContextRunVice_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task LocalDiskEntryLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetContextItem(sender);
+        if (item?.Content == null) return;
+
+        await LoadOrRunFileAsync(item.Content, item.Kind, item.Name, target, run);
+    }
+
+    // "Load"/"Run" on C64U/VICE for a .prg/.ml/.asm file in the C64U tree, whether a real remote
+    // file or a virtual entry inside a mounted disk image (item.Content already holds the
+    // latter's bytes) - the same unification OpenC64UFileInEditorAsync already relies on.
+    private async void C64UFileContextLoadC64U_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void C64UFileContextLoadVice_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void C64UFileContextRunC64U_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void C64UFileContextRunVice_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task C64UFileLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetC64UContextItem(sender);
+        if (item == null) return;
+        if (item.Content == null && ViewModel.C64UFtp == null) return;
+
+        using var _ = BeginBusyCursor();
+        try
+        {
+            byte[] bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
+            await LoadOrRunFileAsync(bytes, item.Kind, item.Name, target, run);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error downloading file: {ex.Message}", "Load/Run File", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // Decodes bytes into source text, stripping a leading UTF-8 byte-order-mark if present, the
+    // same as File.ReadAllText's own encoding detection does for a file opened directly from
+    // disk. A bare Encoding.UTF8.GetString does not strip it, and a leftover BOM character
+    // corrupts a source file's very first line - e.g. breaking comment/".org" recognition for a
+    // line that should start with ";" or "*", since the line then starts with U+FEFF instead
+    // (which, unlike ordinary whitespace, string.Trim() does not remove either).
+    private static string DecodeSourceText(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    // Sends a file's bytes to VICE or the C64 Ultimate, without needing it open in a tab first.
+    // An .asm file is assembled fresh from its source text (mirroring MainViewModel's own
+    // TryBuildPrgData); a .prg/.ml file's bytes are already the final ready-to-transfer payload.
+    // Shows an "Assembly Errors" dialog and stops, same as the active-tab Run/Load commands, if
+    // assembling fails.
+    private async Task LoadOrRunFileAsync(byte[] rawBytes, C64UFileKind kind, string displayName, TransferTarget target, bool run)
+    {
+        byte[] prgBytes;
+        if (kind == C64UFileKind.Asm)
+        {
+            var result = new Asm6502Assembler().Assemble(
+                DecodeSourceText(rawBytes), ViewModel.Settings.AsmOutputMode == "Standalone",
+                (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    string.Join(Environment.NewLine, result.Errors.Select(err => $"Line {err.LineNumber}: {err.Message}")),
+                    "Assembly Errors", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            prgBytes = result.PrgBytes!;
+        }
+        else
+        {
+            prgBytes = rawBytes;
+        }
+
+        if (target == TransferTarget.Vice)
+        {
+            if (run) await RunFileOnViceAsync(prgBytes, displayName);
+            else await LoadFileOnViceAsync(prgBytes, displayName);
+        }
+        else
+        {
+            if (run) await RunFileOnC64UAsync(prgBytes, displayName);
+            else await LoadFileOnC64UAsync(prgBytes, displayName);
+        }
+    }
+
+    private async Task LoadFileOnViceAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+            var client = new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort);
+            await client.TransferAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+            ViewModel.SetStatus($"'{displayName}' transferred to VICE. Type RUN in the emulator to start it.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    // Runs a file's bytes on VICE: a native autostart RUN if the bytes have a runnable BASIC
+    // entry point of their own, otherwise the same load-then-type-SYS trick RunOnViceAsync uses
+    // for a standalone-origin active tab (see PrgConverter.NeedsSysToRun).
+    private async Task RunFileOnViceAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            var client = new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort);
+
+            if (new PrgConverter().NeedsSysToRun(prgBytes, out ushort origin))
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+                await client.TransferAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+
+                await Task.Delay(MainViewModel.SysCommandDelay);
+                await client.TypeAsync($"SYS{origin}\r");
+
+                ViewModel.SetStatus($"'{displayName}' transferred and running on VICE (SYS{origin}).");
+            }
+            else
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+                await client.RunAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+                ViewModel.SetStatus($"'{displayName}' transferred and running on VICE.");
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer/program execution failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    private async Task LoadFileOnC64UAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("Please set the Commodore 64 Ultimate URL in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+            var client = new C64UltimateClient();
+            await client.LoadPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+            ViewModel.SetStatus($"'{displayName}' transferred to C64 Ultimate.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    // Runs a file's bytes on the C64 Ultimate - see RunFileOnViceAsync for the same reasoning,
+    // mirroring RunCurrentProgramAsync's own load_prg-then-typed-SYS trick.
+    private async Task RunFileOnC64UAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("Please set the Commodore 64 Ultimate URL in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            var client = new C64UltimateClient();
+
+            if (new PrgConverter().NeedsSysToRun(prgBytes, out ushort origin))
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+                await client.LoadPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+
+                await Task.Delay(MainViewModel.SysCommandDelay);
+                await client.TypeAsync(ViewModel.Settings.C64UUrl, $"SYS{origin}\r");
+
+                ViewModel.SetStatus($"'{displayName}' transferred and running on the C64 Ultimate (SYS{origin}).");
+            }
+            else
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+                await client.RunPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+                ViewModel.SetStatus($"'{displayName}' transferred and running on the C64 Ultimate.");
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer/program execution failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
     private void FileOpen_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
@@ -753,29 +992,190 @@ public partial class MainWindow : Window
 
     // Dropping files from Explorer is only allowed when every dropped file is a .prg - the
     // drop is rejected as a whole (no partial-open) if any other file type is included.
+    // Dropping from Windows Explorer while hovering a folder or disk-image row in either tree
+    // copies/uploads/embeds into it (any file type - see Window_PreviewDrop); hovering anything
+    // else falls back to the original behavior of opening every dropped file as a new tab, only
+    // when all of them are .prg (mixed selections are rejected wholesale, no partial-open).
     private void Window_PreviewDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
-        e.Effects = IsAllPrgFileDrop(e, out _) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
+        if (FindOsDropTarget(e) != null)
+        {
+            e.Effects = DragDropEffects.Copy;
+            return;
+        }
+
+        ClearOsDropHighlight();
+        e.Effects = IsAllPrgFileDrop(e, out _) ? DragDropEffects.Copy : DragDropEffects.None;
     }
 
-    private void Window_PreviewDrop(object sender, DragEventArgs e)
+    private async void Window_PreviewDrop(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
         e.Handled = true;
-        if (!IsAllPrgFileDrop(e, out string[] paths)) return;
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        object? target = FindOsDropTarget(e);
+        ClearOsDropHighlight();
 
+        switch (target)
+        {
+            case FileTreeItem localFolder when localFolder.IsFolder:
+                CopyFilesIntoLocalFolder(paths, localFolder);
+                return;
+            case FileTreeItem localDiskImage when localDiskImage.Kind.IsDiskImageKind():
+                foreach (string path in paths)
+                {
+                    if (RejectFolderForDiskImage(path)) continue;
+                    AddFileToLocalDiskImage(path, localDiskImage);
+                }
+                return;
+            case C64UFileItem c64uFolder when c64uFolder.IsFolder:
+                await UploadFilesToC64UFolderAsync(paths, c64uFolder.FullPath);
+                return;
+            case C64UFileItem c64uDiskImage when c64uDiskImage.Kind.IsDiskImageKind():
+                foreach (string path in paths)
+                {
+                    if (RejectFolderForDiskImage(path)) continue;
+                    await AddFileToC64UDiskImageAsync(path, c64uDiskImage);
+                }
+                return;
+        }
+
+        if (!IsAllPrgFileDrop(e, out _)) return;
         foreach (string path in paths)
             OpenFileByPath(path);
+    }
+
+    private static bool RejectFolderForDiskImage(string path)
+    {
+        if (!Directory.Exists(path)) return false;
+        MessageBox.Show($"\"{Path.GetFileName(path)}\" is a folder and can't be added to a disk image.",
+            "Add File Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return true;
     }
 
     private static bool IsAllPrgFileDrop(DragEventArgs e, out string[] paths)
     {
         paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
         return paths.Length > 0 && paths.All(p => p.EndsWith(".prg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Copies each dropped file/folder into targetFolder, matching PasteToFolder's copy-mode
+    // collision handling (skip with a warning rather than overwrite).
+    private void CopyFilesIntoLocalFolder(string[] sourcePaths, FileTreeItem targetFolder)
+    {
+        bool anyCopied = false;
+        foreach (string sourcePath in sourcePaths)
+        {
+            string itemName    = Path.GetFileName(sourcePath);
+            string destination = Path.Combine(targetFolder.FullPath, itemName);
+            bool isFolder       = Directory.Exists(sourcePath);
+            if ((isFolder && Directory.Exists(destination)) || (!isFolder && File.Exists(destination)))
+            {
+                MessageBox.Show($"A {(isFolder ? "folder" : "file")} named \"{itemName}\" already exists in \"{targetFolder.Name}\".",
+                    "Copy Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                continue;
+            }
+            try
+            {
+                if (isFolder) CopyDirectoryRecursive(sourcePath, destination);
+                else          File.Copy(sourcePath, destination);
+                anyCopied = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not copy \"{itemName}\":\n{ex.Message}", "Copy Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        if (!anyCopied) return;
+        targetFolder.RefreshChildren();
+        targetFolder.IsExpanded = true;
+    }
+
+    // Uploads each dropped file as-is (no assemble/tokenize - a C64U folder can hold source
+    // files directly, unlike a disk image) into targetDir, mirroring C64UUploadToolbar_Click's
+    // single-file flow. Folders aren't supported (no recursive-FTP-upload capability exists yet).
+    private async Task UploadFilesToC64UFolderAsync(string[] sourcePaths, string targetDir)
+    {
+        if (ViewModel.C64UFtp == null) return;
+
+        bool anyUploaded = false;
+        foreach (string sourcePath in sourcePaths)
+        {
+            string itemName = Path.GetFileName(sourcePath);
+            if (Directory.Exists(sourcePath))
+            {
+                MessageBox.Show($"\"{itemName}\" is a folder - uploading folders to the C64 Ultimate isn't supported yet.",
+                    "Upload Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                continue;
+            }
+            try
+            {
+                var bytes = File.ReadAllBytes(sourcePath);
+                string remotePath = CombineC64UPath(targetDir, itemName);
+                await ViewModel.C64UFtp.UploadBytesAsync(remotePath, bytes);
+                anyUploaded = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not upload \"{itemName}\":\n{ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        if (!anyUploaded) return;
+        await RefreshC64UNode(targetDir);
+        ViewModel.SetStatus($"Uploaded {sourcePaths.Length:N0} file(s) to the C64 Ultimate.");
+    }
+
+    // Finds the folder or disk-image row (in either tree) currently under an OS file drag, if
+    // any, and highlights it the same way an internal tree drag-drop does. Window-level
+    // PreviewDragOver/Drop claim every OS file drop (DataFormats.FileDrop) before the
+    // per-TreeViewItem DragOver/Drop handlers ever see it, so this reimplements the same
+    // hit-testing/highlight bookkeeping here instead of relying on those.
+    private object? FindOsDropTarget(DragEventArgs e)
+    {
+        object? dataContext = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext;
+
+        if (dataContext is FileTreeItem localItem && (localItem.IsFolder || localItem.Kind.IsDiskImageKind()))
+        {
+            SetOsDropHighlight(localItem);
+            return localItem;
+        }
+        if (dataContext is C64UFileItem c64uItem && !c64uItem.IsVirtual && (c64uItem.IsFolder || c64uItem.Kind.IsDiskImageKind()))
+        {
+            SetOsDropHighlight(c64uItem);
+            return c64uItem;
+        }
+
+        ClearOsDropHighlight();
+        return null;
+    }
+
+    private void SetOsDropHighlight(FileTreeItem target)
+    {
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
+        if (ReferenceEquals(_currentDropTarget, target)) return;
+        if (_currentDropTarget != null) _currentDropTarget.IsDropTarget = false;
+        _currentDropTarget = target;
+        target.IsDropTarget = true;
+    }
+
+    private void SetOsDropHighlight(C64UFileItem target)
+    {
+        if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
+        if (ReferenceEquals(_c64uCurrentDropTarget, target)) return;
+        if (_c64uCurrentDropTarget != null) _c64uCurrentDropTarget.IsDropTarget = false;
+        _c64uCurrentDropTarget = target;
+        target.IsDropTarget = true;
+    }
+
+    private void ClearOsDropHighlight()
+    {
+        if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
     }
 
     // Shows the Windows "busy" cursor for the scope of the returned IDisposable - used around
@@ -937,6 +1337,7 @@ public partial class MainWindow : Window
         {
             var tab = existingTab ?? new EditorTab { DisplayName = item.Name, VirtualSourceId = sourceId };
             tab.Kind = item.Kind;
+            tab.Language = item.Kind == C64UFileKind.Asm ? EditorLanguage.Asm : EditorLanguage.Basic;
 
             if (wantsHexMode)
             {
@@ -948,7 +1349,7 @@ public partial class MainWindow : Window
                 tab.RawBytes = null;
                 tab.Document.Text = item.Kind == C64UFileKind.Prg
                     ? PadLineNumbers(new PrgConverter().ConvertFromPrg(item.Content))
-                    : Encoding.UTF8.GetString(item.Content);
+                    : DecodeSourceText(item.Content);
             }
 
             if (existingTab == null)
@@ -1032,30 +1433,81 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
+            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
             Title = "Add File to Disk Image"
         };
         if (dialog.ShowDialog() != true) return;
 
+        AddFileToLocalDiskImage(dialog.FileName, item);
+    }
+
+    // Builds prgData from a local file path (mirroring TryBuildDiskEntryPrgDataFromBytes, see
+    // there) and adds it to a local disk image's bytes on disk - the shared core behind both
+    // "Add File to Disk Image" and dragging a file onto a disk image row.
+    private void AddFileToLocalDiskImage(string sourcePath, FileTreeItem diskImageItem)
+    {
+        var sourceKind = FileClassifier.Classify(sourcePath, isFolder: false);
+        if (!TryBuildDiskEntryPrgDataFromBytes(File.ReadAllBytes(sourcePath), sourceKind, out byte[]? prgData))
+            return;
+
         try
         {
-            byte[] prgData = dialog.FileName.EndsWith(".bas", StringComparison.OrdinalIgnoreCase)
-                ? new PrgConverter().ConvertToPrg(File.ReadAllText(dialog.FileName, Encoding.UTF8))
-                : File.ReadAllBytes(dialog.FileName);
-            string entryName = Path.GetFileNameWithoutExtension(dialog.FileName);
+            string entryName = Path.GetFileNameWithoutExtension(sourcePath);
+            var entryKind = FileClassifier.Classify(entryName + ".prg", isFolder: false, () => prgData!);
 
-            byte[] diskBytes = File.ReadAllBytes(item.FullPath);
-            var kind = FileClassifier.Classify(item.FullPath, isFolder: false);
-            byte[] updated = DiskImage.ForKind(kind).AddEntry(diskBytes, entryName, C64UFileKind.Prg, prgData);
-            File.WriteAllBytes(item.FullPath, updated);
+            byte[] diskBytes = File.ReadAllBytes(diskImageItem.FullPath);
+            var diskKind = FileClassifier.Classify(diskImageItem.FullPath, isFolder: false);
+            byte[] updated = DiskImage.ForKind(diskKind).AddEntry(diskBytes, entryName, entryKind, prgData!);
+            File.WriteAllBytes(diskImageItem.FullPath, updated);
 
-            RefreshDiskImageNode(item.FullPath);
+            RefreshDiskImageNode(diskImageItem.FullPath);
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Could not add file to disk image:\n{ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    // Builds ready-to-add-to-disk .prg bytes for "Add File to Disk Image" from a local file path:
+    // tokenizes .bas source, assembles .asm/.s source fresh, or passes an already-tokenized
+    // .prg/.ml file through unchanged - see TryBuildDiskEntryPrgDataFromBytes for the shared core
+    // (used directly when the source lives on the C64U rather than the local disk).
+    private bool TryBuildDiskEntryPrgData(string sourcePath, out byte[]? prgData)
+    {
+        var kind = FileClassifier.Classify(sourcePath, isFolder: false);
+        return TryBuildDiskEntryPrgDataFromBytes(File.ReadAllBytes(sourcePath), kind, out prgData);
+    }
+
+    // Builds ready-to-add-to-disk .prg bytes from raw source bytes: assembles .asm/.s source
+    // fresh (mirroring LoadOrRunFileAsync - a real C64 can't do anything useful with raw assembly
+    // text sitting on a disk), tokenizes .bas source, or passes an already-tokenized .prg/.ml
+    // file through unchanged. On an assembly failure, shows the same "Assembly Errors" dialog the
+    // Load/Run commands do and returns false so the caller aborts without touching the disk image.
+    private bool TryBuildDiskEntryPrgDataFromBytes(byte[] sourceBytes, C64UFileKind sourceKind, out byte[]? prgData)
+    {
+        if (sourceKind == C64UFileKind.Asm)
+        {
+            var result = new Asm6502Assembler().Assemble(
+                DecodeSourceText(sourceBytes), ViewModel.Settings.AsmOutputMode == "Standalone",
+                (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    string.Join(Environment.NewLine, result.Errors.Select(err => $"Line {err.LineNumber}: {err.Message}")),
+                    "Assembly Errors", MessageBoxButton.OK, MessageBoxImage.Error);
+                prgData = null;
+                return false;
+            }
+
+            prgData = result.PrgBytes;
+            return true;
+        }
+
+        prgData = sourceKind == C64UFileKind.Bas
+            ? new PrgConverter().ConvertToPrg(DecodeSourceText(sourceBytes))
+            : sourceBytes;
+        return true;
     }
 
     // Reloads a disk image node's virtual children after its bytes were rewritten (add/delete/
@@ -1478,7 +1930,7 @@ public partial class MainWindow : Window
             // counts as the visible text changing), so the guard must still be up here -
             // otherwise Editor_TextChanged marks the freshly activated tab as modified.
             Editor.Document = tab.Document;
-            ApplyLineTransformersForLanguage(tab.Language);
+            ApplyLineTransformersForLanguage(tab.Language, tab.Kind);
             Editor.CaretOffset = Math.Min(tab.CaretOffset, tab.Document.TextLength);
             Editor.ScrollToVerticalOffset(tab.ScrollOffsetY);
             Editor.Focus();
@@ -1539,7 +1991,7 @@ public partial class MainWindow : Window
     // FindHighlightColorizer is language-agnostic and stays active either way. Also shows a
     // sequential editor-line-number gutter for Asm only - BASIC already shows its own line
     // numbers as ordinary source text, so a duplicate gutter would look redundant there.
-    private void ApplyLineTransformersForLanguage(EditorLanguage language)
+    private void ApplyLineTransformersForLanguage(EditorLanguage language, C64UFileKind kind)
     {
         var transformers = Editor.TextArea.TextView.LineTransformers;
         transformers.Clear();
@@ -1568,10 +2020,15 @@ public partial class MainWindow : Window
 
         transformers.Add(_findHighlightColorizer);
 
-        Editor.FontFamily = language == EditorLanguage.Asm ? _asmEditorFont : _basicEditorFont;
-
         bool isAsm = language == EditorLanguage.Asm;
-        _petsciiGlyphGenerator.IsAsmMode = isAsm;
+
+        // A .bas file is plain ASCII source - unlike a detokenized .prg, which is styled to look
+        // like what actually ends up on a real C64 screen once tokenized/transferred, and needs
+        // the PETSCII-glyph font/substitution to do that. BASIC syntax coloring (the transformers
+        // above) still applies either way; only the font and glyph handling change.
+        bool isAsciiStyled = isAsm || kind == C64UFileKind.Bas;
+        Editor.FontFamily = isAsciiStyled ? _asmEditorFont : _basicEditorFont;
+        _petsciiGlyphGenerator.IsAsmMode = isAsciiStyled;
         Editor.TextArea.TextView.Redraw();
         VariablesPanel.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
         SymbolsPanel.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
@@ -2681,38 +3138,6 @@ public partial class MainWindow : Window
         if (item != null) await OpenC64UFileInEditorAsync(item, forceHex: true);
     }
 
-    private async void C64UFileContextRun_Click(object sender, RoutedEventArgs e)
-    {
-        var item = GetC64UContextItem(sender);
-        if (item == null || ViewModel.C64UFtp == null) return;
-
-        try
-        {
-            byte[] prgData = await DownloadAsPrgAsync(item);
-            await ViewModel.RunOnC64UAsync(prgData);
-        }
-        catch (Exception ex)
-        {
-            ViewModel.SetStatus($"Run failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
-    private async void C64UFileContextLoad_Click(object sender, RoutedEventArgs e)
-    {
-        var item = GetC64UContextItem(sender);
-        if (item == null || ViewModel.C64UFtp == null) return;
-
-        try
-        {
-            byte[] prgData = await DownloadAsPrgAsync(item);
-            await ViewModel.LoadOnC64UAsync(prgData);
-        }
-        catch (Exception ex)
-        {
-            ViewModel.SetStatus($"Load failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
     private async void C64UFileContextMountA_Click(object sender, RoutedEventArgs e)
     {
         var item = GetC64UContextItem(sender);
@@ -2760,24 +3185,42 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
+            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
             Title = "Add File to Disk Image"
         };
         if (dialog.ShowDialog() != true) return;
 
+        await AddFileToC64UDiskImageAsync(dialog.FileName, item);
+    }
+
+    // Builds prgData from a local file path and adds it to a C64U disk image mounted over FTP -
+    // the shared core behind both "Add File to Disk Image" and dragging a local file onto a C64U
+    // disk image row.
+    private async Task AddFileToC64UDiskImageAsync(string sourcePath, C64UFileItem diskImageItem)
+    {
+        if (ViewModel.C64UFtp == null || !TryBuildDiskEntryPrgData(sourcePath, out byte[]? prgData)) return;
+
+        string entryName = Path.GetFileNameWithoutExtension(sourcePath);
+        await AddEntryToC64UDiskImageAsync(prgData!, entryName, diskImageItem);
+    }
+
+    // Adds already-built prgData to a C64U disk image mounted over FTP - the shared core behind
+    // AddFileToC64UDiskImageAsync (source is a local file path) and dragging an already-uploaded
+    // C64U file onto a disk image row (source is bytes already in hand/downloaded).
+    private async Task AddEntryToC64UDiskImageAsync(byte[] prgData, string entryName, C64UFileItem diskImageItem)
+    {
+        if (ViewModel.C64UFtp == null) return;
+
         try
         {
-            byte[] prgData = dialog.FileName.EndsWith(".bas", StringComparison.OrdinalIgnoreCase)
-                ? new PrgConverter().ConvertToPrg(File.ReadAllText(dialog.FileName, Encoding.UTF8))
-                : File.ReadAllBytes(dialog.FileName);
-            string entryName = Path.GetFileNameWithoutExtension(dialog.FileName);
+            var entryKind = FileClassifier.Classify(entryName + ".prg", isFolder: false, () => prgData);
 
-            byte[] diskBytes = await ViewModel.C64UFtp.DownloadBytesAsync(item.FullPath);
-            var kind = FileClassifier.Classify(item.FullPath, isFolder: false);
-            byte[] updated = DiskImage.ForKind(kind).AddEntry(diskBytes, entryName, C64UFileKind.Prg, prgData);
-            await ViewModel.C64UFtp.UploadBytesAsync(item.FullPath, updated);
+            byte[] diskBytes = await ViewModel.C64UFtp.DownloadBytesAsync(diskImageItem.FullPath);
+            var diskKind = FileClassifier.Classify(diskImageItem.FullPath, isFolder: false);
+            byte[] updated = DiskImage.ForKind(diskKind).AddEntry(diskBytes, entryName, entryKind, prgData);
+            await ViewModel.C64UFtp.UploadBytesAsync(diskImageItem.FullPath, updated);
 
-            await RefreshC64UNode(item.FullPath);
+            await RefreshC64UNode(diskImageItem.FullPath);
         }
         catch (Exception ex)
         {
@@ -2883,6 +3326,7 @@ public partial class MainWindow : Window
 
             var tab = existingTab ?? new EditorTab { DisplayName = item.Name, VirtualSourceId = sourceId };
             tab.Kind = item.Kind;
+            tab.Language = item.Kind == C64UFileKind.Asm ? EditorLanguage.Asm : EditorLanguage.Basic;
 
             if (wantsHexMode)
             {
@@ -2894,7 +3338,7 @@ public partial class MainWindow : Window
                 tab.RawBytes = null;
                 tab.Document.Text = item.Kind == C64UFileKind.Prg
                     ? PadLineNumbers(new PrgConverter().ConvertFromPrg(bytes))
-                    : Encoding.UTF8.GetString(bytes);
+                    : DecodeSourceText(bytes);
             }
 
             if (existingTab == null)
@@ -2907,18 +3351,6 @@ public partial class MainWindow : Window
             MessageBox.Show($"Error opening file: {ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
-    }
-
-    // Downloads the file and, for BASIC source, tokenizes it into PRG format ready to send to
-    // the C64 Ultimate. Already-tokenized .prg files (including those found inside a mounted
-    // .d64 image) pass through unchanged.
-    private async Task<byte[]> DownloadAsPrgAsync(C64UFileItem item)
-    {
-        var bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
-        if (item.Kind == C64UFileKind.Prg) return bytes;
-
-        string text = Encoding.UTF8.GetString(bytes);
-        return new PrgConverter().ConvertToPrg(ViewModel.PrepareCodeForTransfer(text));
     }
 
     private async Task DeleteC64UItemAsync(C64UFileItem item)
@@ -3187,8 +3619,21 @@ public partial class MainWindow : Window
 
     private static C64UFileItem? GetC64UContextItem(object sender)
     {
-        var contextMenu = (sender as MenuItem)?.Parent as ContextMenu;
+        var contextMenu = GetOwningContextMenu(sender as MenuItem);
         return (contextMenu?.PlacementTarget as TreeViewItem)?.DataContext as C64UFileItem;
+    }
+
+    // A MenuItem's Parent is the ContextMenu directly only when it's a top-level item; for one
+    // inside a submenu (e.g. "C64U" under "Run"), Parent is the enclosing MenuItem instead, so a
+    // single Parent lookup returns null for those. Walks up through as many nested submenu levels
+    // as needed to find the real owning ContextMenu.
+    private static ContextMenu? GetOwningContextMenu(MenuItem? item)
+    {
+        DependencyObject? node = item;
+        while (node is MenuItem menuItem)
+            node = menuItem.Parent as DependencyObject;
+
+        return node as ContextMenu;
     }
 
     private C64UFileItem? FindC64UItemByPath(string path)
@@ -3702,13 +4147,20 @@ public partial class MainWindow : Window
         var delta = e.GetPosition(null) - _dragStartPoint;
         if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
             Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
-        DragDrop.DoDragDrop((DependencyObject)sender, _dragItem, DragDropEffects.Move);
+        // Move onto a folder, Copy onto a disk image (see FileTreeItem_DragOver) - both must be
+        // allowed here, or WPF silently rejects whichever one a DragOver handler tries to request
+        // that isn't in this set, showing the "no drop" cursor no matter what Effects is set to.
+        DragDrop.DoDragDrop((DependencyObject)sender, _dragItem, DragDropEffects.Move | DragDropEffects.Copy);
     }
 
+    // A folder target moves the dragged item in; a disk-image target embeds a copy of it as a
+    // new entry instead (see IsValidDrop/FileTreeItem_Drop) - only a single file can become a
+    // disk entry, so a dragged folder is rejected there.
     private void FileTreeItem_DragOver(object sender, DragEventArgs e)
     {
         var target = (sender as TreeViewItem)?.DataContext as FileTreeItem;
-        if (target == null || !target.IsFolder || _dragItem == null || !IsValidDrop(_dragItem, target))
+        bool isValidTarget = target != null && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _dragItem == null || !IsValidDrop(_dragItem, target!))
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
@@ -3718,9 +4170,9 @@ public partial class MainWindow : Window
         {
             if (_currentDropTarget != null) _currentDropTarget.IsDropTarget = false;
             _currentDropTarget = target;
-            target.IsDropTarget = true;
+            target!.IsDropTarget = true;
         }
-        e.Effects = DragDropEffects.Move;
+        e.Effects = target!.Kind.IsDiskImageKind() ? DragDropEffects.Copy : DragDropEffects.Move;
         e.Handled = true;
     }
 
@@ -3737,11 +4189,22 @@ public partial class MainWindow : Window
     private void FileTreeItem_Drop(object sender, DragEventArgs e)
     {
         if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
-        var targetFolder = (sender as TreeViewItem)?.DataContext as FileTreeItem;
-        if (targetFolder == null || !targetFolder.IsFolder || _dragItem == null || !IsValidDrop(_dragItem, targetFolder))
+        var target = (sender as TreeViewItem)?.DataContext as FileTreeItem;
+        bool isValidTarget = target != null && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _dragItem == null || !IsValidDrop(_dragItem, target!))
         {
             _dragItem = null; e.Handled = true; return;
         }
+
+        if (target!.Kind.IsDiskImageKind())
+        {
+            AddFileToLocalDiskImage(_dragItem.FullPath, target);
+            _dragItem = null;
+            e.Handled = true;
+            return;
+        }
+
+        var targetFolder = target;
         string itemName    = Path.GetFileName(_dragItem.FullPath);
         string destination = Path.Combine(targetFolder.FullPath, itemName);
         if ((_dragItem.IsFolder && Directory.Exists(destination)) || (!_dragItem.IsFolder && File.Exists(destination)))
@@ -3765,6 +4228,128 @@ public partial class MainWindow : Window
             MessageBox.Show($"Could not move \"{itemName}\":\n{ex.Message}", "Move Failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         e.Handled = true;
+    }
+
+    private void C64UFileTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _c64uDragStartPoint = e.GetPosition(null);
+        var item = (e.OriginalSource as FrameworkElement)?.DataContext as C64UFileItem;
+        // Virtual entries (found inside a mounted .d64) have no real FTP path of their own, so
+        // they can't be dragged/moved like a real remote file.
+        _c64uDragItem = item?.IsVirtual == true ? null : item;
+    }
+
+    private void C64UFileTreeItem_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _c64uDragItem == null) return;
+        var delta = e.GetPosition(null) - _c64uDragStartPoint;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        // Move onto a folder, Copy onto a disk image (see C64UFileTreeItem_DragOver) - both must
+        // be allowed here, or WPF silently rejects whichever one a DragOver handler tries to
+        // request that isn't in this set, showing the "no drop" cursor no matter what Effects is
+        // set to.
+        DragDrop.DoDragDrop((DependencyObject)sender, _c64uDragItem, DragDropEffects.Move | DragDropEffects.Copy);
+    }
+
+    // A folder target moves the dragged item in (FTP rename to a path under the new directory);
+    // a disk-image target embeds a copy of it as a new entry instead (see C64UFileTreeItem_Drop) -
+    // mirrors FileTreeItem_DragOver's local-tree equivalent.
+    private void C64UFileTreeItem_DragOver(object sender, DragEventArgs e)
+    {
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        bool isValidTarget = target != null && !target.IsVirtual && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _c64uDragItem == null || !IsValidC64UDrop(_c64uDragItem, target!))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+        if (!ReferenceEquals(_c64uCurrentDropTarget, target))
+        {
+            if (_c64uCurrentDropTarget != null) _c64uCurrentDropTarget.IsDropTarget = false;
+            _c64uCurrentDropTarget = target;
+            target!.IsDropTarget = true;
+        }
+        e.Effects = target!.Kind.IsDiskImageKind() ? DragDropEffects.Copy : DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void C64UFileTreeItem_DragLeave(object sender, DragEventArgs e)
+    {
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        if (target != null && ReferenceEquals(_c64uCurrentDropTarget, target))
+        {
+            target.IsDropTarget = false;
+            _c64uCurrentDropTarget = null;
+        }
+    }
+
+    private async void C64UFileTreeItem_Drop(object sender, DragEventArgs e)
+    {
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        bool isValidTarget = target != null && !target.IsVirtual && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _c64uDragItem == null || !IsValidC64UDrop(_c64uDragItem, target!) || ViewModel.C64UFtp == null)
+        {
+            _c64uDragItem = null; e.Handled = true; return;
+        }
+
+        var dragItem = _c64uDragItem;
+        _c64uDragItem = null;
+        e.Handled = true;
+
+        if (target!.Kind.IsDiskImageKind())
+        {
+            try
+            {
+                byte[] bytes = dragItem.Content ?? await ViewModel.C64UFtp.DownloadBytesAsync(dragItem.FullPath);
+                if (!TryBuildDiskEntryPrgDataFromBytes(bytes, dragItem.Kind, out byte[]? prgData)) return;
+
+                string entryName = Path.GetFileNameWithoutExtension(dragItem.Name);
+                await AddEntryToC64UDiskImageAsync(prgData!, entryName, target);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not add file to disk image:\n{ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return;
+        }
+
+        string itemName = dragItem.Name;
+        string sourceParent = GetC64UParentPath(dragItem.FullPath);
+        string destination = CombineC64UPath(target.FullPath, itemName);
+        try
+        {
+            await ViewModel.C64UFtp.RenameAsync(dragItem.FullPath, destination);
+            await RefreshC64UNode(sourceParent);
+            await RefreshC64UNode(target.FullPath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not move \"{itemName}\":\n{ex.Message}", "Move Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static bool IsValidC64UDrop(C64UFileItem source, C64UFileItem target)
+    {
+        // A disk image can only gain a new entry (a single file, not a folder full of them, and
+        // not another disk image, which the real C64 format has no way to nest) - the
+        // move-related checks below (same-parent/self-nesting) are meaningless for this target
+        // kind anyway.
+        if (target.Kind.IsDiskImageKind()) return !source.IsFolder && !source.Kind.IsDiskImageKind();
+
+        if (!target.IsFolder) return false;
+        if (string.Equals(GetC64UParentPath(source.FullPath), target.FullPath, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (source.IsFolder)
+        {
+            string srcPrefix = source.FullPath.TrimEnd('/') + "/";
+            string tgtPrefix = target.FullPath.TrimEnd('/') + "/";
+            if (tgtPrefix.StartsWith(srcPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
     }
 
     private void RootHeader_DragOver(object sender, DragEventArgs e)
@@ -3952,6 +4537,12 @@ public partial class MainWindow : Window
 
     private static bool IsValidDrop(FileTreeItem source, FileTreeItem target)
     {
+        // A disk image can only gain a new entry (a single file, not a folder full of them, and
+        // not another disk image, which the real C64 format has no way to nest) - the
+        // move-related checks below (same-parent/self-nesting) are meaningless for this target
+        // kind anyway.
+        if (target.Kind.IsDiskImageKind()) return !source.IsFolder && !source.Kind.IsDiskImageKind();
+
         if (!target.IsFolder) return false;
         if (string.Equals(Path.GetDirectoryName(source.FullPath), target.FullPath, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -4181,7 +4772,7 @@ public partial class MainWindow : Window
 
     private static FileTreeItem? GetContextItem(object sender)
     {
-        var contextMenu = (sender as MenuItem)?.Parent as ContextMenu;
+        var contextMenu = GetOwningContextMenu(sender as MenuItem);
         return (contextMenu?.PlacementTarget as TreeViewItem)?.DataContext as FileTreeItem;
     }
 

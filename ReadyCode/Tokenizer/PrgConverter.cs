@@ -158,13 +158,12 @@ public class PrgConverter
     }
 
     /// <summary>
-    /// Converts a .prg binary file back into its original BASIC source text.
+    /// Converts a .prg binary file back into its original BASIC source text. A buffer too short
+    /// to hold even one line (e.g. an empty, freshly created .prg, or just the 2-byte load-address
+    /// header) isn't an error - the loop below simply never runs, so it returns an empty listing.
     /// </summary>
     public string ConvertFromPrg(byte[] data)
     {
-        if (data.Length < 4)
-            throw new FormatException("File is too small to be a valid C64 program.");
-
         var lines = new List<string>();
 
         // Skip the 2-byte load address header
@@ -317,6 +316,30 @@ public class PrgConverter
 
         stubLines = lines;
         codeOffset = pos;
+        return true;
+    }
+
+    /// <summary>
+    /// Determines whether a raw .prg needs a typed "SYS &lt;origin&gt;" command to actually start
+    /// after loading, rather than relying on an emulator/hardware's native autostart RUN. True
+    /// when the file has no runnable BASIC entry point at all - neither a complete tokenized BASIC
+    /// program (<see cref="IsBasicProgram"/>) nor a loader stub followed by machine code
+    /// (<see cref="TryDetectBasicStub"/>) - in which case autostart's RUN has nothing to execute,
+    /// and <paramref name="origin"/> is instead read directly from the file's own 2-byte
+    /// load-address header (SYS's target is always wherever that load address actually places the
+    /// code, whether the file arrived as a real .prg or was just produced by assembling source
+    /// with an explicit ".org").
+    /// </summary>
+    /// <param name="data">The .prg data (including its 2-byte load-address header) to check.</param>
+    /// <param name="origin">The address to SYS into, if a typed command is needed.</param>
+    /// <returns>True if the file needs a typed SYS command to run.</returns>
+    public bool NeedsSysToRun(byte[] data, out ushort origin)
+    {
+        origin = 0;
+        if (data.Length < 2) return false;
+        if (IsBasicProgram(data) || TryDetectBasicStub(data, out _, out _)) return false;
+
+        origin = (ushort)(data[0] | (data[1] << 8));
         return true;
     }
 

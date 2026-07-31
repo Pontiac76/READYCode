@@ -72,9 +72,17 @@ public class PrgConverterTests
     // ── ConvertFromPrg ───────────────────────────────────────────────────────
 
     [Fact]
-    public void ConvertFromPrg_TooShort_Throws()
+    public void ConvertFromPrg_TooShortForEvenOneLine_ReturnsEmptyString()
     {
-        Assert.Throws<FormatException>(() => new PrgConverter().ConvertFromPrg([0x01, 0x08]));
+        // Too short to hold a real line isn't an error - e.g. a brand-new blank .prg from "New
+        // File..." (which FileClassifier now classifies as Prg, not Ml) must still open cleanly.
+        Assert.Equal(string.Empty, new PrgConverter().ConvertFromPrg([0x01, 0x08]));
+    }
+
+    [Fact]
+    public void ConvertFromPrg_EmptyData_ReturnsEmptyString()
+    {
+        Assert.Equal(string.Empty, new PrgConverter().ConvertFromPrg([]));
     }
 
     [Fact]
@@ -262,6 +270,46 @@ public class PrgConverterTests
     public void TryDetectBasicStub_TooShort_ReturnsFalse()
     {
         Assert.False(new PrgConverter().TryDetectBasicStub([0x01], out _, out _));
+    }
+
+    // ── NeedsSysToRun ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void NeedsSysToRun_CompleteBasicProgram_ReturnsFalse()
+    {
+        // Autostart's RUN works natively - no SYS needed.
+        byte[] prg = new PrgConverter().ConvertToPrg("10 PRINT \"HI\"");
+        Assert.False(new PrgConverter().NeedsSysToRun(prg, out _));
+    }
+
+    [Fact]
+    public void NeedsSysToRun_BasicStubPlusMachineCode_ReturnsFalse()
+    {
+        // Autostart follows the stub's own SYS line - no typed command needed either.
+        var converter = new PrgConverter();
+        byte[] stub = converter.ConvertToPrg("10 SYS 2064");
+        byte[] mlBytes = [0xA9, 0x00, 0x60];
+        byte[] combined = [.. stub, .. mlBytes];
+
+        Assert.False(converter.NeedsSysToRun(combined, out _));
+    }
+
+    [Fact]
+    public void NeedsSysToRun_RawMachineCodeNoBasicEntryPoint_ReturnsTrueWithHeaderOrigin()
+    {
+        // No BASIC anywhere - autostart's RUN would have nothing to execute, so a typed
+        // "SYS <origin>" is required, using the file's own load-address header as the target.
+        byte[] data = [0x00, 0xC0, 0xA9, 0x00, 0x60]; // origin $C000
+        bool needsSys = new PrgConverter().NeedsSysToRun(data, out ushort origin);
+
+        Assert.True(needsSys);
+        Assert.Equal(0xC000, origin);
+    }
+
+    [Fact]
+    public void NeedsSysToRun_TooShort_ReturnsFalse()
+    {
+        Assert.False(new PrgConverter().NeedsSysToRun([0x01], out _));
     }
 
     // ── ShouldTokenizeOnSave ─────────────────────────────────────────────────
