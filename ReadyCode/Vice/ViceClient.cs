@@ -19,6 +19,7 @@ public class ViceClient
 
     private const byte _apiVersion = 0x02;
     private const byte _autostartCommand = 0xdd;
+    private const byte _keyboardFeedCommand = 0x72;
     private const byte _advanceInstructionsCommand = 0x71;
     private const byte _exitCommand = 0xaa;
     private const byte _quitCommand = 0xbb;
@@ -87,6 +88,31 @@ public class ViceClient
     {
         string prgFile = WritePrgToTempFile(prgData, programName);
         await SendAutostartAsync(emulatorPath, prgFile, runAfterLoading: true, bringToForeground);
+    }
+
+    /// <summary>
+    /// Simulates typing on the C64's keyboard by sending the text to VICE's binary monitor
+    /// "Keyboard feed" command, which adds it straight to the keyboard buffer as if a user had
+    /// typed it - the standard trick for issuing an immediate-mode BASIC command (e.g.
+    /// "SYS49152\r") right after loading a standalone (no BASIC loader stub) program, since
+    /// VICE's autostart only ever issues a plain RUN, which does nothing without a BASIC
+    /// program in memory.
+    /// </summary>
+    /// <param name="text">
+    /// The characters to "type", encoded as plain ASCII - byte-identical to PETSCII for the
+    /// digits, uppercase letters, and Return ('\r') this is used for. Typically ends in "\r" so
+    /// the command executes immediately rather than just sitting on the input line unsubmitted.
+    /// </param>
+    public async Task TypeAsync(string text)
+    {
+        await RequireViceRunningAsync();
+
+        byte[] textBytes = System.Text.Encoding.ASCII.GetBytes(text);
+        byte[] body = new byte[1 + textBytes.Length];
+        body[0] = (byte)textBytes.Length;
+        textBytes.CopyTo(body, 1);
+
+        await SendOneShotCommandAsync(BuildRequest(_keyboardFeedCommand, body));
     }
 
     /// <summary>
