@@ -19,6 +19,7 @@ public class ViceClient
 
     private const byte _apiVersion = 0x02;
     private const byte _autostartCommand = 0xdd;
+    private const byte _memoryGetCommand = 0x01;
     private const byte _keyboardFeedCommand = 0x72;
     private const byte _advanceInstructionsCommand = 0x71;
     private const byte _exitCommand = 0xaa;
@@ -197,6 +198,41 @@ public class ViceClient
             throw new InvalidOperationException($"VICE rejected the request (binary monitor error code {errorCode}).");
 
         return ParseInfoResponse(body);
+    }
+
+    /// <summary>
+    /// Reads raw bytes from the machine currently running in VICE, via the binary monitor's
+    /// "Memory get" command - used to disassemble live memory rather than a file on disk.
+    /// </summary>
+    /// <param name="startAddress">The first address to read.</param>
+    /// <param name="length">The number of bytes to read, starting at <paramref name="startAddress"/>.</param>
+    public async Task<byte[]> ReadMemoryAsync(ushort startAddress, int length)
+    {
+        await RequireViceRunningAsync();
+
+        int endAddress = startAddress + length - 1;
+        if (endAddress > 0xFFFF)
+            throw new ArgumentOutOfRangeException(nameof(length), "The requested range extends past $FFFF.");
+
+        byte[] body = new byte[8];
+        body[0] = 0x00; // FX: no side effects
+        BitConverter.GetBytes(startAddress).CopyTo(body, 1);       // SA
+        BitConverter.GetBytes((ushort)endAddress).CopyTo(body, 3); // EA
+        body[5] = 0x00;                                            // MS: main memory
+        BitConverter.GetBytes((ushort)0).CopyTo(body, 6);          // BI: bank 0 (default/CPU)
+
+        using var client = new TcpClient();
+        await client.ConnectAsync(_monitorHost, _monitorPort);
+        using var stream = client.GetStream();
+
+        await stream.WriteAsync(BuildRequest(_memoryGetCommand, body));
+
+        var (errorCode, responseBody) = await ReadResponseAsync(stream);
+        if (errorCode != 0)
+            throw new InvalidOperationException($"VICE rejected the request (binary monitor error code {errorCode}).");
+
+        ushort memoryLength = BitConverter.ToUInt16(responseBody, 0);
+        return responseBody[2..(2 + memoryLength)];
     }
 
     /// <summary>

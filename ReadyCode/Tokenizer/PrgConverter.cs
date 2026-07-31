@@ -248,6 +248,78 @@ public class PrgConverter
         }
     }
 
+    /// <summary>
+    /// Detects a short BASIC "loader" stub at the very start of .prg data - one or more
+    /// well-formed tokenized BASIC lines, with machine code bytes following immediately after.
+    /// Real C64 BASIC never validates a line's link pointer beyond following it, and a SYS-and-jump
+    /// stub's machine code never gets reached by continuing to follow links (SYS transfers control
+    /// away for good), so a real-world stub commonly has no trailing 0x0000 "end of program"
+    /// marker at all - the raw code just starts right where the next line's link field would be.
+    /// Accordingly, this stops consuming lines the moment it hits either a literal 0x0000 marker
+    /// (consumed, since that's a real sentinel, not code) or anything that doesn't look like a
+    /// forward-moving link (left alone - those bytes are the actual machine code). It also doesn't
+    /// require a line's link to match the exact address arithmetic <see cref="ConvertToPrg"/>
+    /// itself would produce, for the same reason: real BASIC doesn't validate that either, so
+    /// third-party/hand-assembled stubs routinely have link values that don't match a from-scratch
+    /// recomputation. Used by "Disassemble file" so a machine-language .prg with a real loader stub
+    /// (e.g. "10 SYS 2064") disassembles starting at the code's actual origin instead of
+    /// misinterpreting the stub's own tokenized bytes as 6502 opcodes.
+    /// </summary>
+    /// <param name="data">The .prg data (including its 2-byte load-address header) to check.</param>
+    /// <param name="stubLines">The stub's decoded BASIC line text (e.g. "10 SYS 2064"), if found.</param>
+    /// <param name="codeOffset">
+    /// The byte offset from the start of <paramref name="data"/> (header included) where the stub
+    /// ends and the trailing machine code begins, if found.
+    /// </param>
+    /// <returns>True if a stub was found with at least one byte of machine code following it.</returns>
+    public bool TryDetectBasicStub(byte[] data, out IReadOnlyList<string> stubLines, out int codeOffset)
+    {
+        stubLines = Array.Empty<string>();
+        codeOffset = 0;
+
+        if (data.Length < 4 || data[0] != (_loadAddress & 0xFF) || data[1] != (_loadAddress >> 8))
+            return false;
+
+        var lines = new List<string>();
+        int pos = 2;
+        ushort previousAddress = _loadAddress;
+
+        while (true)
+        {
+            if (pos + 1 >= data.Length) break;
+
+            ushort link = (ushort)(data[pos] | (data[pos + 1] << 8));
+
+            if (link == 0x0000)
+            {
+                pos += 2; // a real end-of-program sentinel, not code - consume it too
+                break;
+            }
+
+            if (link <= previousAddress) break; // doesn't continue the chain - this is the code
+
+            int afterLink = pos + 2;
+            if (afterLink + 1 >= data.Length) break; // truncated - not a real line
+
+            ushort lineNumber = (ushort)(data[afterLink] | (data[afterLink + 1] << 8));
+            int tokenPos = afterLink + 2;
+            while (tokenPos < data.Length && data[tokenPos] != 0x00)
+                tokenPos++;
+
+            if (tokenPos >= data.Length) break; // missing line terminator - not a real line
+
+            lines.Add($"{lineNumber} {DetokenizeLine(data[(afterLink + 2)..tokenPos])}");
+            previousAddress = link;
+            pos = tokenPos + 1; // past this line's own terminator byte
+        }
+
+        if (lines.Count == 0 || pos >= data.Length) return false;
+
+        stubLines = lines;
+        codeOffset = pos;
+        return true;
+    }
+
     #endregion
 
     #region Private Methods

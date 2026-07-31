@@ -99,6 +99,16 @@ public sealed record AsmWordEntry(int? NumericValue, string? SymbolName, int Sym
 /// True when <paramref name="OffsetSymbolName"/>'s resolved value is subtracted from the base
 /// rather than added (e.g. the "-" in "* - start"). Meaningless when <paramref name="OffsetSymbolName"/> is null.
 /// </param>
+/// <param name="OperandIsWideHexLiteral">
+/// True when an instruction's <see cref="OperandForm.Address"/>/<see cref="OperandForm.AddressX"/>/
+/// <see cref="OperandForm.AddressY"/> operand was written as a "$" hex literal with more than 2
+/// digits (e.g. "$00F0"), the standard
+/// convention - also used by Asm6502Disassembler's own output - for explicitly requesting a
+/// 2-byte/absolute operand even when the value itself would otherwise fit a single byte. Used by
+/// Asm6502Assembler.TryResolveMode to avoid silently narrowing such an operand to zero-page, which
+/// would shrink the instruction by a byte and desynchronize every address after it. Always false
+/// for a symbol reference, a non-hex literal, or outside an instruction operand.
+/// </param>
 public sealed record ParsedAsmLine(
     int LineNumber,
     string? Label,
@@ -114,7 +124,8 @@ public sealed record ParsedAsmLine(
     IReadOnlyList<AsmWordEntry>? WordData = null,
     bool ConstantIsCurrentAddress = false,
     string? OffsetSymbolName = null,
-    bool OffsetIsNegative = false);
+    bool OffsetIsNegative = false,
+    bool OperandIsWideHexLiteral = false);
 
 /// <summary>
 /// Parses a single line of 6502 assembly source into its label, mnemonic, and operand shape.
@@ -176,7 +187,7 @@ public class AsmLineParser
         // it isn't a real mnemonic.
         if (IsDirective(code, ".org", out string orgArgs))
         {
-            if (!TryParseValue(orgArgs, out int orgValue, out string? orgSymbol) || orgSymbol != null)
+            if (!TryParseValue(orgArgs, out int orgValue, out string? orgSymbol, out _) || orgSymbol != null)
                 return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
                     $"'.org' value \"{orgArgs}\" must be a numeric literal.");
             if (orgValue is < 0 or > 0xFFFF)
@@ -197,7 +208,7 @@ public class AsmLineParser
             if (afterStar.StartsWith('='))
             {
                 string starOrgArgs = afterStar[1..].Trim();
-                if (!TryParseValue(starOrgArgs, out int starOrgValue, out string? starOrgSymbol) || starOrgSymbol != null)
+                if (!TryParseValue(starOrgArgs, out int starOrgValue, out string? starOrgSymbol, out _) || starOrgSymbol != null)
                     return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
                         $"'* =' value \"{starOrgArgs}\" must be a numeric literal.");
                 if (starOrgValue is < 0 or > 0xFFFF)
@@ -282,7 +293,7 @@ public class AsmLineParser
             string? baseSymbol = null;
             if (!baseIsCurrentAddress)
             {
-                if (!TryParseValue(baseText, out int parsedBase, out baseSymbol))
+                if (!TryParseValue(baseText, out int parsedBase, out baseSymbol, out _))
                     return new ParsedAsmLine(lineNumber, label, null, OperandForm.None, null, null,
                         $"Malformed constant value \"{valueText}\".");
                 baseNumeric = baseSymbol == null ? parsedBase : null;
@@ -364,12 +375,12 @@ public class AsmLineParser
         if (!TrySplitOffset(innerText, out string baseText, out int offset))
             return new ParsedAsmLine(lineNumber, label, mnemonic, OperandForm.None, null, null, $"Malformed operand \"{innerText}\".");
 
-        if (!TryParseValue(baseText, out int value, out string? symbol))
+        if (!TryParseValue(baseText, out int value, out string? symbol, out bool isWideHexLiteral))
             return new ParsedAsmLine(lineNumber, label, mnemonic, OperandForm.None, null, null, $"Malformed operand \"{innerText}\".");
 
         return symbol != null
             ? new ParsedAsmLine(lineNumber, label, mnemonic, form, null, symbol, null, SymbolOffset: offset)
-            : new ParsedAsmLine(lineNumber, label, mnemonic, form, value + offset, null, null);
+            : new ParsedAsmLine(lineNumber, label, mnemonic, form, value + offset, null, null, OperandIsWideHexLiteral: isWideHexLiteral);
     }
 
     // Returns whether code begins with the given directive name, splitting off its trimmed
@@ -430,10 +441,16 @@ public class AsmLineParser
     // special-case it to mean the address of whatever line is being resolved right now, e.g. an
     // instruction operand like "JMP *" or a ".word *" entry. AsmSymbolIndex excludes it from the
     // Symbols panel since it isn't a real symbol.
-    private static bool TryParseValue(string text, out int value, out string? symbol)
+    //
+    // isWideHexLiteral reports whether a "$" literal was written with more than 2 hex digits (e.g.
+    // "$00F0"), the standard convention (also used by Asm6502Disassembler's own output) for
+    // explicitly requesting a 2-byte/absolute operand even when the value itself would otherwise
+    // fit a single byte - see its use in Asm6502Assembler.TryResolveMode.
+    private static bool TryParseValue(string text, out int value, out string? symbol, out bool isWideHexLiteral)
     {
         value = 0;
         symbol = null;
+        isWideHexLiteral = false;
         text = text.Trim();
         if (text.Length == 0) return false;
 
@@ -443,7 +460,12 @@ public class AsmLineParser
             return true;
         }
 
-        if (text[0] == '$') return TryParseRadix(text[1..], 16, out value);
+        if (text[0] == '$')
+        {
+            string digits = text[1..];
+            isWideHexLiteral = digits.Length > 2;
+            return TryParseRadix(digits, 16, out value);
+        }
         if (text[0] == '%') return TryParseRadix(text[1..], 2, out value);
         if (char.IsDigit(text[0])) return TryParseRadix(text, 10, out value);
 
@@ -583,7 +605,7 @@ public class AsmLineParser
                 return false;
             }
 
-            if (!TryParseValue(baseText, out int value, out string? symbol))
+            if (!TryParseValue(baseText, out int value, out string? symbol, out _))
             {
                 error = $"Invalid .word value \"{token}\".";
                 return false;

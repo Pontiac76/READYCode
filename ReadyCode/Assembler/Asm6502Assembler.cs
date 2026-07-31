@@ -321,7 +321,15 @@ public class Asm6502Assembler
                     ? constValue + line.SymbolOffset
                     : line.NumericValue;
 
+                // A literal written with more than 2 hex digits (e.g. "$00F0") explicitly asks for
+                // an absolute operand even though the value itself would fit zero-page - without
+                // this, a disassembly listing's absolute-mode instructions targeting low memory
+                // (a common, legitimate pattern - Asm6502Disassembler always emits 4-digit operands
+                // for them) would silently narrow to zero-page on reassembly, shrinking that
+                // instruction by a byte and shifting every address after it, eventually breaking
+                // unrelated branches elsewhere in the file once enough drift accumulates.
                 bool zeroPageEligible = !isDeferredLabel
+                    && !line.OperandIsWideHexLiteral
                     && effectiveValue is >= 0 and <= 0xFF
                     && legalModes.ContainsKey(zp);
                 mode = zeroPageEligible ? zp : abs;

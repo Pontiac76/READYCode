@@ -70,6 +70,49 @@ public class Asm6502AssemblerTests
         Assert.Equal(new byte[] { 0xB9, 0x00, 0x02 }, AssembleCode("LDA $0200,Y"));
     }
 
+    // A "$" literal written with more than 2 hex digits (e.g. "$00F0") explicitly requests an
+    // absolute operand even when the value would fit zero-page - the same convention
+    // Asm6502Disassembler's own output relies on, so a disassembly listing round-trips back to
+    // byte-identical machine code instead of silently narrowing to zero-page (which would shrink
+    // the instruction by a byte and desync every address after it).
+    [Fact]
+    public void Assemble_FourDigitHexLiteralBelow256_ForcesAbsoluteAddressing()
+    {
+        Assert.Equal(new byte[] { 0xAD, 0xF0, 0x00 }, AssembleCode("LDA $00F0"));
+    }
+
+    [Fact]
+    public void Assemble_FourDigitHexLiteralBelow256_ForcesAbsoluteIndexedXAddressing()
+    {
+        Assert.Equal(new byte[] { 0x9D, 0xF0, 0x00 }, AssembleCode("STA $00F0,X"));
+    }
+
+    [Fact]
+    public void Assemble_TwoDigitHexLiteral_StillAssemblesZeroPage()
+    {
+        // Unaffected by the wide-hex-literal rule above - a genuine 2-digit literal still prefers
+        // zero-page exactly as before.
+        Assert.Equal(new byte[] { 0xA5, 0xF0 }, AssembleCode("LDA $F0"));
+    }
+
+    [Fact]
+    public void Disassemble_ThenReassemble_AbsoluteModeLowAddressOperand_RoundTripsToIdenticalBytes()
+    {
+        // Reproduces the real-world failure this rule fixes: STA absolute,X targeting a low
+        // ($00F0) address, followed by a branch. Disassembling then reassembling must reproduce
+        // the exact original bytes - a 1-byte narrowing here would shift the branch's target
+        // address without shifting the branch instruction itself, corrupting its offset.
+        byte[] original = [0x9D, 0xF0, 0x00, 0xE8, 0xD0, 0xFB]; // STA $00F0,X; INX; BNE -5
+        var disassembly = new Asm6502Disassembler().Disassemble(original, 0x0801);
+
+        var result = new Asm6502Assembler().Assemble(disassembly.Source);
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => $"L{e.LineNumber}: {e.Message}")));
+
+        // An explicit ".org" (which Disassemble always emits) produces a raw 2-byte load-address
+        // header, not AssembleCode's usual 15-byte BASIC stub.
+        Assert.Equal(original, result.PrgBytes![2..]);
+    }
+
     [Fact]
     public void Assemble_IndirectXAddressing()
     {

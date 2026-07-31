@@ -39,6 +39,16 @@ public partial class DisassemblyToolbarControl : UserControl
     #region Public Methods
 
     /// <summary>
+    /// Focuses and selects the contents of the Start address box, ready for the user to type
+    /// over it immediately.
+    /// </summary>
+    public void FocusStartAddress()
+    {
+        StartAddressBox.Focus();
+        StartAddressBox.SelectAll();
+    }
+
+    /// <summary>
     /// Parses and validates the Start/End address boxes.
     /// </summary>
     /// <param name="start">The parsed start address, if valid.</param>

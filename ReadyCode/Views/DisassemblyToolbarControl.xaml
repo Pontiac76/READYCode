@@ -3,22 +3,61 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Visibility="Collapsed">
 
+    <UserControl.Resources>
+        <!-- Matches SettingsWindow's OK/Cancel button style. -->
+        <Style TargetType="Button">
+            <Setter Property="Background"       Value="{DynamicResource ThemeSettingsBtnBg}"/>
+            <Setter Property="Foreground"       Value="{DynamicResource ThemeSettingsLabelFg}"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource ThemeSettingsBtnBorder}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Padding"          Value="12,4"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"   Value="{DynamicResource ThemeSettingsBtnHoverBg}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush"  Value="{DynamicResource ThemeSettingsTreeSelectedBg}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ThemeSettingsTreeSelectedBg}"/>
+                            </Trigger>
+                            <Trigger Property="IsDefault" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource ThemeSettingsTreeSelectedBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
     <Border Background="{DynamicResource ThemeMenuItemBg}"
             BorderBrush="{DynamicResource ThemeMenuItemBorder}"
             BorderThickness="0,0,0,1"
             Padding="10,6">
-        <StackPanel Orientation="Horizontal">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <TextBlock Text="Start:" VerticalAlignment="Center"
                        Foreground="{DynamicResource ThemeMenuItemFg}" Margin="0,0,4,0"/>
             <TextBox x:Name="StartAddressBox"
-                     Width="70" Height="22"
+                     Width="70"
                      BorderThickness="1"
                      BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
                      Background="{DynamicResource ThemeSettingsInputBg}"
                      Foreground="{DynamicResource ThemeMenuItemFg}"
                      CaretBrush="{DynamicResource ThemeMenuItemFg}"
                      FontFamily="Consolas" FontSize="12"
-                     Padding="4,2"
+                     Padding="4,4"
+                     VerticalAlignment="Center"
                      VerticalContentAlignment="Center"
                      CharacterCasing="Upper"
                      KeyDown="AddressBox_KeyDown"/>
@@ -26,25 +65,23 @@
             <TextBlock Text="End:" VerticalAlignment="Center"
                        Foreground="{DynamicResource ThemeMenuItemFg}" Margin="12,0,4,0"/>
             <TextBox x:Name="EndAddressBox"
-                     Width="70" Height="22"
+                     Width="70"
                      BorderThickness="1"
                      BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
                      Background="{DynamicResource ThemeSettingsInputBg}"
                      Foreground="{DynamicResource ThemeMenuItemFg}"
                      CaretBrush="{DynamicResource ThemeMenuItemFg}"
                      FontFamily="Consolas" FontSize="12"
-                     Padding="4,2"
+                     Padding="4,4"
+                     VerticalAlignment="Center"
                      VerticalContentAlignment="Center"
                      CharacterCasing="Upper"
                      KeyDown="AddressBox_KeyDown"/>
 
             <Button x:Name="DisassembleButton"
                     Content="Disassemble"
-                    Margin="12,0,0,0" Height="22" Padding="10,0"
-                    Foreground="{DynamicResource ThemeMenuItemFg}"
-                    Background="{DynamicResource ThemeMenuItemBg}"
-                    BorderBrush="{DynamicResource ThemeSettingsInputBorder}"
-                    BorderThickness="1"
+                    Margin="12,0,0,0"
+                    VerticalAlignment="Center"
                     Cursor="Hand"
                     Click="DisassembleButton_Click"/>
         </StackPanel>

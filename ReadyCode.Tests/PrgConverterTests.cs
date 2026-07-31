@@ -143,6 +143,127 @@ public class PrgConverterTests
         Assert.False(new PrgConverter().IsBasicProgram([0x01]));
     }
 
+    // ── TryDetectBasicStub ───────────────────────────────────────────────────
+
+    [Fact]
+    public void TryDetectBasicStub_StubFollowedByMachineCode_ReturnsTrue()
+    {
+        var converter = new PrgConverter();
+        byte[] stub = converter.ConvertToPrg("10 SYS 2064");
+        byte[] mlBytes = [0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x60];
+        byte[] combined = [.. stub, .. mlBytes];
+
+        bool found = converter.TryDetectBasicStub(combined, out IReadOnlyList<string> stubLines, out int codeOffset);
+
+        Assert.True(found);
+        Assert.Equal(stub.Length, codeOffset);
+        Assert.Equal(mlBytes, combined[codeOffset..]);
+        Assert.Single(stubLines);
+        Assert.Equal("10 SYS 2064", stubLines[0]);
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_NonstandardButForwardMovingLink_StillDetected()
+    {
+        // Real-world stub generators don't always compute the link pointer with the exact
+        // arithmetic ConvertToPrg's own output uses - BASIC itself doesn't validate it either, it
+        // just follows whatever's stored. As long as the link still moves strictly forward,
+        // detection must still succeed (this is what previously broke on a real cracked-scene
+        // "1994 SYS 2059" stub whose link didn't match a from-scratch recomputation).
+        var converter = new PrgConverter();
+        byte[] stub = converter.ConvertToPrg("1994 SYS 2059");
+        ushort originalLink = (ushort)(stub[2] | (stub[3] << 8));
+        ushort skewedLink = (ushort)(originalLink + 3);
+        stub[2] = (byte)(skewedLink & 0xFF);
+        stub[3] = (byte)(skewedLink >> 8);
+
+        byte[] mlBytes = [0xA9, 0x00, 0x60];
+        byte[] combined = [.. stub, .. mlBytes];
+
+        bool found = converter.TryDetectBasicStub(combined, out IReadOnlyList<string> stubLines, out int codeOffset);
+
+        Assert.True(found);
+        Assert.Equal(stub.Length, codeOffset);
+        Assert.Equal("1994 SYS 2059", stubLines[0]);
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_NoEndOfProgramMarker_MachineCodeStartsRightAfterLine_StillDetected()
+    {
+        // BASIC's LIST/RUN never needs to continue past a SYS-and-jump line (SYS transfers
+        // control away for good), so a real stub commonly has no trailing 0x0000 "end of
+        // program" marker at all - the machine code starts immediately after the line's own
+        // terminator byte. This was previously misdetected as "not a stub" because the check
+        // always required a second link/marker pair after the first line.
+        var converter = new PrgConverter();
+        byte[] stubWithMarker = converter.ConvertToPrg("1994 SYS 2059");
+        byte[] stubNoMarker = stubWithMarker[..^2]; // drop ConvertToPrg's own trailing 0x0000 marker
+        byte[] mlBytes = [0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x60];
+        byte[] combined = [.. stubNoMarker, .. mlBytes];
+
+        bool found = converter.TryDetectBasicStub(combined, out IReadOnlyList<string> stubLines, out int codeOffset);
+
+        Assert.True(found);
+        Assert.Equal(stubNoMarker.Length, codeOffset);
+        Assert.Equal(mlBytes, combined[codeOffset..]);
+        Assert.Single(stubLines);
+        Assert.Equal("1994 SYS 2059", stubLines[0]);
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_RealWorldExample_NoSpaceAfterKeyword_StillDetected()
+    {
+        // Exact byte layout of the real cracked-scene file that exposed this bug: "1994
+        // SYS2059" (no space typed between the keyword and its argument) with no 0x0000 end
+        // marker before the machine code.
+        byte[] data =
+        [
+            0x01, 0x08,                         // load address $0801
+            0x0B, 0x08,                         // link -> $080B (2059) - the code's real start
+            0xCA, 0x07,                         // line number 1994
+            0x9E, 0x32, 0x30, 0x35, 0x39,       // tokens: SYS token + "2059"
+            0x00,                               // line terminator
+            0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x60, // raw ML code - starts immediately, no marker
+        ];
+
+        bool found = new PrgConverter().TryDetectBasicStub(data, out IReadOnlyList<string> stubLines, out int codeOffset);
+
+        Assert.True(found);
+        Assert.Equal(12, codeOffset);
+        Assert.Equal(new byte[] { 0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x60 }, data[codeOffset..]);
+        Assert.Equal("1994 SYS2059", stubLines[0]);
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_CompleteBasicProgramWithNoTrailingBytes_ReturnsFalse()
+    {
+        // A genuine, complete BASIC program - nothing follows the terminator, so there's no
+        // machine code to find the origin of.
+        byte[] prg = new PrgConverter().ConvertToPrg("10 PRINT \"HI\"");
+        Assert.False(new PrgConverter().TryDetectBasicStub(prg, out _, out _));
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_MachineLanguageOnly_ReturnsFalse()
+    {
+        // Real load address, but the bytes after it are raw 6502 code, not a valid line chain.
+        byte[] data = [0x01, 0x08, 0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x60];
+        Assert.False(new PrgConverter().TryDetectBasicStub(data, out _, out _));
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_WrongLoadAddress_ReturnsFalse()
+    {
+        byte[] data = [0x00, 0x10, 0x00, 0x00, 0xA9, 0x00];
+        Assert.False(new PrgConverter().TryDetectBasicStub(data, out _, out _));
+    }
+
+    [Fact]
+    public void TryDetectBasicStub_TooShort_ReturnsFalse()
+    {
+        Assert.False(new PrgConverter().TryDetectBasicStub([0x01], out _, out _));
+    }
+
     // ── ShouldTokenizeOnSave ─────────────────────────────────────────────────
 
     [Theory]

@@ -102,6 +102,13 @@ public class EditorTab : INotifyPropertyChanged
     public bool IsDisassemblyMode { get; set; }
 
     /// <summary>
+    /// Gets or sets which live machine to read memory from while
+    /// <see cref="IsDisassemblyMode"/> is true - the C64 Ultimate or a running VICE instance.
+    /// Meaningless once disassembly mode is cleared.
+    /// </summary>
+    public DisassemblySource DisassemblySource { get; set; }
+
+    /// <summary>
     /// Gets or sets the memory address each document line represents, keyed by 1-based line
     /// number, while <see cref="IsDisassemblyMode"/> is true - fed to
     /// <see cref="ReadyCode.Editor.AsmLineNumberMargin.LineAddresses"/> when this tab is active,

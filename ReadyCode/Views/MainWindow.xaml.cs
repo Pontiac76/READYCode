@@ -31,6 +31,7 @@ using ReadyCode.Search;
 using ReadyCode.Sid;
 using ReadyCode.Tokenizer;
 using ReadyCode.ViewModels;
+using ReadyCode.Vice;
 
 namespace ReadyCode.Views;
 
@@ -545,33 +546,37 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => Editor.Focus());
     }
 
-    private void C64UDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab();
+    private void C64UDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab(DisassemblySource.C64U);
+
+    private void ViceDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab(DisassemblySource.Vice);
 
     // Opens a new read-only disassembly tab with the address-range toolbar visible, ready for
     // the user to fill in Start/End and click Disassemble. The tab has no FilePath until Saved
     // As - see FileSaveAs_Click/SaveTabWithDialog for where IsDisassemblyMode gets cleared once
     // that happens, turning it into an ordinary editable .asm tab.
-    private void OpenDisassemblyTab()
+    private void OpenDisassemblyTab(DisassemblySource source)
     {
         var tab = new EditorTab
         {
             Language = EditorLanguage.Asm,
             Kind = C64UFileKind.Asm,
-            DisplayName = "Disassembly.asm",
+            DisplayName = source == DisassemblySource.Vice ? "Disassembly (VICE).asm" : "Disassembly (C64U).asm",
             IsDisassemblyMode = true,
+            DisassemblySource = source,
         };
         tab.Document.Text = "; Enter a Start and End address above, then click Disassemble.";
 
         ViewModel.OpenTabs.Add(tab);
         ActivateTab(tab);
 
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => DisassemblyToolbar.Focus());
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => DisassemblyToolbar.FocusStartAddress());
     }
 
-    // Reads the requested memory range from the C64 Ultimate and disassembles it into the active
-    // tab's document. Captures the tab up front (rather than reusing Editor.Document after the
-    // await) so a slow request that completes after the user switches tabs still lands in the
-    // right place instead of overwriting whatever tab is active by then.
+    // Reads the requested memory range from the tab's DisassemblySource (the C64 Ultimate or a
+    // running VICE instance) and disassembles it into the active tab's document. Captures the
+    // tab up front (rather than reusing Editor.Document after the await) so a slow request that
+    // completes after the user switches tabs still lands in the right place instead of
+    // overwriting whatever tab is active by then.
     private async void DisassemblyToolbar_DisassembleRequested(object? sender, EventArgs e)
     {
         var tab = ViewModel.ActiveTab;
@@ -583,7 +588,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        bool useVice = tab.DisassemblySource == DisassemblySource.Vice;
+        if (useVice && string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+        if (!useVice && string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
         {
             ViewModel.SetStatus("C64U URL not set. Go to Preferences > Settings to configure it.", StatusType.Error);
             return;
@@ -594,10 +605,13 @@ public partial class MainWindow : Window
         try
         {
             using var _ = BeginBusyCursor();
-            ViewModel.SetStatus($"Reading {length:N0} bytes from the C64 Ultimate…");
+            ViewModel.SetStatus(useVice
+                ? $"Reading {length:N0} bytes from VICE…"
+                : $"Reading {length:N0} bytes from the C64 Ultimate…");
 
-            var client = new C64UltimateClient();
-            byte[] bytes = await client.ReadMemoryAsync(ViewModel.Settings.C64UUrl, start, length);
+            byte[] bytes = useVice
+                ? await new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort).ReadMemoryAsync(start, length)
+                : await new C64UltimateClient().ReadMemoryAsync(ViewModel.Settings.C64UUrl, start, length);
 
             var result = new Asm6502Disassembler().Disassemble(
                 bytes, start, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
@@ -621,6 +635,109 @@ public partial class MainWindow : Window
         {
             ViewModel.SetStatus($"Disassembly failed: {ex.Message}", StatusType.Error);
         }
+    }
+
+    // "Disassemble file" - local top-level .ml file in the Explorer tree.
+    private void FileContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item == null) return;
+
+        try
+        {
+            DisassembleFileBytes(File.ReadAllBytes(item.FullPath), item.Name);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error disassembling file: {ex.Message}", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // "Disassemble file" - virtual .ml entry inside a mounted .d64/.d81 in the Explorer tree;
+    // its content is already in memory from when the disk image was expanded.
+    private void LocalDiskEntryContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item?.Content == null) return;
+
+        DisassembleFileBytes(item.Content, item.Name);
+    }
+
+    // "Disassemble file" - a .ml file in the C64U tree, whether a real remote file or a virtual
+    // entry inside a mounted disk image (item.Content already holds the latter's bytes).
+    private async void C64UFileContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetC64UContextItem(sender);
+        if (item == null) return;
+        if (item.Content == null && ViewModel.C64UFtp == null) return;
+
+        using var _ = BeginBusyCursor();
+        try
+        {
+            byte[] bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
+            DisassembleFileBytes(bytes, item.Name);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error disassembling file: {ex.Message}", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // Decodes a standalone .prg's 2-byte little-endian load-address header, disassembles the
+    // remaining bytes as machine code, and opens the result as a new, ordinary editable .asm tab -
+    // unlike the live-memory "Disassemble at..." flow (see OpenDisassemblyTab), there's no address
+    // range to pick since the whole file is already in hand, so no read-only toolbar is needed.
+    private void DisassembleFileBytes(byte[] prgBytes, string displayName)
+    {
+        if (prgBytes.Length < 2)
+        {
+            MessageBox.Show($"'{displayName}' is too small to disassemble.", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ushort origin = (ushort)(prgBytes[0] | (prgBytes[1] << 8));
+        byte[] codeBytes = prgBytes[2..];
+
+        // A BASIC loader stub (e.g. "10 SYS 2064") tokenizes to bytes that are nonsense as 6502
+        // opcodes - detect it and skip straight to the real machine code's own origin instead.
+        List<string>? stubCommentLines = null;
+        if (new PrgConverter().TryDetectBasicStub(prgBytes, out IReadOnlyList<string> stubLines, out int codeOffset))
+        {
+            origin = (ushort)(origin + (codeOffset - 2));
+            codeBytes = prgBytes[codeOffset..];
+            stubCommentLines = ["; --- BASIC loader stub ---", .. stubLines.Select(line => $"; {line}")];
+        }
+
+        var result = new Asm6502Disassembler().Disassemble(
+            codeBytes, origin, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+
+        var tab = new EditorTab
+        {
+            Language = EditorLanguage.Asm,
+            Kind = C64UFileKind.Asm,
+            DisplayName = $"{Path.GetFileNameWithoutExtension(displayName)} (Disassembled).asm",
+        };
+
+        // The gutter shows the real memory address of each disassembled line, same as the
+        // live-memory "Disassemble at..." flow - shifted past the stub comment's own lines, which
+        // have no address of their own, when one was prepended above.
+        if (stubCommentLines != null)
+        {
+            tab.Document.Text = string.Join(Environment.NewLine, stubCommentLines) + Environment.NewLine + result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses.ToDictionary(
+                kvp => kvp.Key + stubCommentLines.Count, kvp => kvp.Value);
+        }
+        else
+        {
+            tab.Document.Text = result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses;
+        }
+
+        ViewModel.OpenTabs.Add(tab);
+        ActivateTab(tab);
     }
 
     private void FileOpen_Click(object sender, RoutedEventArgs e)
@@ -4617,6 +4734,14 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGhostText()
     {
+        // Completion doesn't make sense for a read-only tab (e.g. a disassembly listing) - there's
+        // nothing for the user to be typing towards.
+        if (Editor.IsReadOnly)
+        {
+            ClearGhostText();
+            return;
+        }
+
         // Don't update while a popup completion window is open.
         if (_completionWindow != null)
         {
@@ -4679,6 +4804,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void OpenCompletionPopup()
     {
+        if (Editor.IsReadOnly) return;
+
         _completionWindow?.Close();
         ClearGhostText();
 
@@ -5164,6 +5291,16 @@ public partial class MainWindow : Window
         if (!_activatingTab && !ViewModel.IsModified)
             ViewModel.IsModified = true;
 
+        // A "Disassemble file" tab starts with real memory addresses in the gutter, but unlike a
+        // live-memory disassembly tab (IsDisassemblyMode) it stays editable, so once the user
+        // changes anything the line/address pairing can no longer be trusted. Just clear the
+        // snapshot here - the debounced RunDocumentAnalysis this same edit already armed will run
+        // UpdateAsmGutterAddresses shortly, which takes back over now that the snapshot is gone,
+        // showing addresses recomputed from the edited source instead (or plain line numbers, if
+        // it no longer assembles cleanly).
+        if (!_activatingTab && ViewModel.ActiveTab is { IsDisassemblyMode: false, DisassemblyLineAddresses: not null } tab)
+            tab.DisassemblyLineAddresses = null;
+
         // Debounced so a full re-analysis doesn't run on every keystroke; also covers tab
         // switches, since assigning Editor.Document in ActivateTab raises this same event.
         _diagnosticsTimer.Stop();
@@ -5198,7 +5335,7 @@ public partial class MainWindow : Window
     private void RunDiagnostics(AssemblyResult? asmResult = null)
     {
         bool isAsm = ViewModel.ActiveTab?.Language == EditorLanguage.Asm;
-        _currentDiagnostics = Editor.Document != null && ViewModel.Settings.EnableLinting
+        _currentDiagnostics = Editor.Document != null && ViewModel.Settings.EnableLinting && !Editor.IsReadOnly
             ? (isAsm ? AsmDiagnostics.Analyze(Editor.Document.Text, asmResult) : BasicDiagnostics.Analyze(Editor.Document.Text))
             : Array.Empty<EditorDiagnostic>();
         _errorSquiggleRenderer.SetDiagnostics(_currentDiagnostics);
@@ -5386,13 +5523,15 @@ public partial class MainWindow : Window
     // one, "address" would just mean wherever the auto-generated BASIC loader stub (or the
     // standalone-output default origin) happens to land the code, an implementation detail rather
     // than something the user chose. Falls back to plain line numbers while the source doesn't
-    // assemble cleanly, since there's no valid address data then. A disassembly-mode tab's
-    // addresses (EditorTab.DisassemblyLineAddresses, set by ActivateTab/DisassembleRequested)
-    // always win instead - this leaves those tabs alone entirely.
+    // assemble cleanly, since there's no valid address data then. A tab that already carries its
+    // own DisassemblyLineAddresses snapshot - a live IsDisassemblyMode tab, or a freshly opened
+    // "Disassemble file" tab - always wins instead; this leaves those tabs alone entirely, letting
+    // this recomputed-by-reassembly view take back over automatically once that snapshot is
+    // cleared (see Editor_TextChanged, for a "Disassemble file" tab that's since been edited).
     private void UpdateAsmGutterAddresses(AssemblyResult asmResult)
     {
         var tab = ViewModel.ActiveTab;
-        if (tab == null || tab.IsDisassemblyMode) return;
+        if (tab == null || tab.IsDisassemblyMode || tab.DisassemblyLineAddresses != null) return;
 
         Dictionary<int, ushort>? lineAddresses = null;
         if (asmResult.Success && asmResult.HasExplicitOrigin)
