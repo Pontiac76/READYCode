@@ -1,5 +1,38 @@
 # Change Log
 
+## [v2.1.0] - 2026-08-02
+
+### New Features
+
+- **Disassembler** - turns 6502 machine code back into address-annotated assembly text in a read-only tab. **Disassemble at...** (now available for both C64U and VICE, previously C64U only) reads live memory from a running C64 Ultimate or VICE instance; **Disassemble file** does the same for a machine-language `.prg`/`.ml` file in either Explorer tree, automatically detecting and skipping a BASIC loader stub so disassembly starts at the real code
+- **Load/Run from the file tree** - right-click a `.prg`, `.asm`/`.s`, or machine-language file directly in either Explorer tree for Load ▸ / Run ▸ submenus that send it straight to the C64 Ultimate or VICE without opening it first
+- **Drag-and-drop overhaul** - full support in the C64U Explorer tree (previously local-only), dragging a file onto a `.d64`/`.d81` disk image now embeds it directly (assembling `.asm`/`.s` or tokenizing `.bas` along the way), and dragging in from Windows Explorer is now target-aware: drop onto a folder to copy/upload, onto a disk image to embed, or anywhere else to open as new tabs
+- Standalone assembly programs (an explicit `.org`, or Assembler Output set to Standalone) now auto-start correctly when run on VICE, matching the C64 Ultimate's existing behavior, by typing a `SYS` command into the keyboard buffer after loading
+- **[RFC] BASIC Module System** - a draft spec for splitting a BASIC program across multiple files is up for community feedback; see the README and [the GitHub issue](https://github.com/jbramwell/READYCode/issues/1)
+
+### Improvements
+
+- Context menus across both Explorer trees standardized: consistent "Open in BASIC/Assembly/Hex editor" wording, "Disassemble file" placement, repositioned "Reveal in File Explorer" and "Add File...", and "Download to PC..." renamed for clarity
+- "Add File to Disk Image" now correctly assembles `.asm`/`.s` source before embedding it, instead of writing the raw, unassembled text
+- Linting, ghost-text completion, and keyword completion are now disabled for read-only disassembly tabs
+- Disassembly toolbar polish: improved focus behavior, tab title, button styling, and height-clipping fixes
+- Disassembler address fields are now forced to uppercase
+- Assembler performance improvements for large source files
+- Symbols panel reorganized for assembly files
+- Editor tab tooltip now shows the full file path, with a new Copy Path context-menu item
+- `.bas` files are no longer tokenized under any circumstance, keeping them byte-for-byte plain PETSCII text
+- Expanded documentation for the Disassembler, drag-and-drop, and Assembly editor addressing-mode behavior
+
+### Bug Fixes
+
+- Fixed VICE's Run command not auto-starting programs with an explicit origin (`* = $c000`)
+- Fixed a 6502 assembler bug where an absolute-mode operand with a value under 256 written as a 4-digit hex literal (e.g. `$00F0`) was silently narrowed to zero-page addressing, corrupting instruction length and later branch offsets
+- Fixed BASIC-loader-stub detection failing on real-world stubs with non-canonical link pointers or no trailing end-of-program marker, so Load/Run and Disassemble file couldn't find the true machine-code origin in some existing files
+- Fixed empty `.prg` files being misclassified as machine language, and a crash when opening or restoring them
+- Fixed a UTF-8 byte-order mark in `.asm`/`.s` files causing spurious "Unknown mnemonic" errors when loading or running from the file tree
+- Fixed dragging a file onto a disk image showing a blocked-drop cursor and refusing to embed it
+- Fixed the disassembly view's gutter showing sequential line numbers instead of real memory addresses
+
 ## [v2.0.0] - 2026-07-26
 
 ### New Features
