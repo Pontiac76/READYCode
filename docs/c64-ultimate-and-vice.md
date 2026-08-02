@@ -65,6 +65,8 @@ VICE integration works differently from the C64 Ultimate's REST API: READYCode b
 - **Load** (Ctrl+Alt+F5) transfers the active program to VICE without running it.
 - **Run** (Alt+F5) transfers it and starts it immediately.
 
+The same standalone-program problem described above for the C64 Ultimate applies to VICE too: its autostart just runs whatever BASIC program ends up in memory, and a standalone assembly program has none. READYCode works around it the same way here - loading the program without autostarting, waiting briefly, then feeding `SYS <origin>` and Enter directly into VICE's keyboard buffer through its binary monitor protocol, rather than VICE's own autostart command.
+
 An option in Preferences can bring the VICE window to the foreground automatically whenever you load or run a program.
 
 ### Machine control
@@ -74,6 +76,12 @@ The VICE menu mirrors the C64U menu: Reset, Reboot, Pause, Resume, Power Off, an
 ## Choosing a target from the editor
 
 Right-click inside the editor to load or run on either target without using the menu bar: the context menu's Load and Run submenus list C64U and VICE side by side. The keyboard shortcuts follow the same pattern throughout the app: F5 and Ctrl+F5 target the C64 Ultimate, Alt+F5 and Ctrl+Alt+F5 target VICE.
+
+The same Load and Run submenus are also available by right-clicking a `.prg`, `.asm`/`.s`, or machine-language file directly in either Explorer tree - the local Folder Explorer or the C64U Explorer - so you can send a file to hardware or an emulator without opening it first. READYCode works out on its own whether the file needs a typed `SYS` command (as described above) or can autostart normally.
+
+## Disassembling live memory
+
+The **C64U** and **VICE** menus each include a **Disassemble at...** command that reads a block of memory directly from the running machine or emulator, starting at an address you provide, and opens it as a read-only, address-annotated 6502 disassembly tab - useful for inspecting code you don't have the source for, or checking what actually ended up in memory after a POKE. To disassemble a file on disk instead of live memory, see [Disassembling machine code](assembly-editor.md#disassembling-machine-code).
 
 ---
 

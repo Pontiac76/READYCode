@@ -27,6 +27,8 @@ Mnemonics, numeric literals, labels, and `;` comments are each highlighted separ
 
 The built-in assembler supports the full standard 6502 instruction set, all 56 official mnemonics, with every legal addressing mode for each one: immediate, zero page (with X or Y indexing), absolute (with X or Y indexing), indirect, indexed indirect, indirect indexed, accumulator, relative, and implied. `ASL`, `LSR`, `ROL`, and `ROR` also accept being written with no operand at all (e.g. plain `ASL` rather than `ASL A`), a common convention in sources ported from other assemblers - it's treated as shorthand for the accumulator form.
 
+A hex literal's digit count controls addressing mode as well as value: `$F0` (two digits) assembles to zero page addressing when the instruction supports it, while `$00F0` (four digits) forces absolute addressing even though the value is small enough to fit in zero page - useful when an operand needs to keep a specific instruction length or you simply want to be explicit about it.
+
 A small set of directives is supported:
 
 - `.org` (or `* = value`, an accepted alias for sources ported from other assemblers) sets the assembly origin (the memory address the code will load at). If used, it must be the first thing in the file.
@@ -54,6 +56,12 @@ How a program is packaged depends on whether the source uses `.org`, and on the 
 - **With `.org`**: READYCode always writes a two-byte load-address header at that address and never adds the BASIC stub, regardless of the Output setting - an explicit `.org` always wins.
 
 Standalone/raw output is the typical choice for code that needs to load at a specific address, such as sprite or character data, or a program meant to be called from elsewhere rather than run directly.
+
+## Disassembling machine code
+
+Right-click a machine-language `.ml` file in either Explorer tree and choose **Disassemble file** to open it as a read-only, address-annotated 6502 disassembly instead of raw bytes. If the file starts with a small BASIC loader stub (a common pattern for making machine code auto-runnable), READYCode detects it and starts the disassembly at the real machine-code origin rather than the stub. Disassembly tabs are read-only - editing, linting, and keyword completion are all disabled - and use the same mnemonic highlighting as a normal assembly file.
+
+To disassemble memory from a running C64 Ultimate or VICE instance instead of a file on disk, see [Disassembling live memory](c64-ultimate-and-vice.md#disassembling-live-memory).
 
 ## Diagnostics
 

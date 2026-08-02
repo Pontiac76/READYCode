@@ -47,6 +47,11 @@ Full documentation, covering every feature in depth, lives in [docs/](docs/READM
   `.org`/`.byte`/`.text`/`.word` directives, and inline diagnostics. Assembling without `.org` produces
   a directly runnable `.prg` with an auto-generated BASIC loader stub; assembling with `.org` writes a
   standard load-address header instead.
+- **Disassembler** - turns 6502 machine code back into address-annotated assembly text in a read-only
+  tab. **Disassemble at...** (C64U and VICE menus) reads live memory directly from a running C64
+  Ultimate or VICE instance starting at a given address; **Disassemble file** (either Explorer's
+  right-click menu) does the same for a machine-language `.prg`/`.ml` file on disk, automatically
+  detecting and skipping any BASIC loader stub so disassembly starts at the real machine code.
 - **Hex Editor** - open any file - not just recognized BASIC/assembly/disk-image types - as a raw
   offset/hex/ASCII grid, with inline byte editing, its own undo/redo history, and full support for
   files inside a mounted `.d64`/`.d81` disk image.
@@ -75,10 +80,17 @@ Full documentation, covering every feature in depth, lives in [docs/](docs/READM
   `.prg` by validating its tokenized line structure, rather than just trusting the file's extension or
   type byte - used to decide which files inside a `.d64`/`.d81` (in either Explorer) are safe to open as text.
 - **File Explorer panels** - both the local Folder Explorer and the C64U Explorer share the same tree
-  UI: inline (VS Code-style) new file/folder creation and rename, drag-and-drop (local only),
-  cut/copy/paste/delete/reveal-in-Explorer, right-click-to-select, and a color-coded file-type badge and
-  icon (folder, floppy disk, or document) for BASIC/machine-language/disk-image files. Both trees can
-  expand a `.d64`/`.d81` disk image in place to browse - and open - the programs stored inside it.
+  UI: inline (VS Code-style) new file/folder creation and rename, drag-and-drop (move within or between
+  either tree; drop a file onto a disk image to embed it directly, assembling `.asm`/`.s` source or
+  tokenizing `.bas` source along the way), cut/copy/paste/delete/reveal-in-Explorer, right-click-to-select,
+  and a color-coded file-type badge and icon (folder, floppy disk, or document) for
+  BASIC/machine-language/disk-image files. Dragging files in from Windows Explorer copies them into a
+  hovered folder, embeds them into a hovered disk image, or - dropped anywhere else - opens them as new
+  tabs (`.prg` files only). Both trees can expand a `.d64`/`.d81` disk image in place to browse - and
+  open - the programs stored inside it. Right-click a `.prg`, `.asm`/`.s`, or machine-language file in
+  either tree for Load ▸ / Run ▸ submenus that send it straight to the C64 Ultimate or VICE without
+  opening it first; machine-language files get a Disassemble file option in place of Open in
+  BASIC/Assembly editor.
 - **Disk image authoring** - both Explorers can create a new, blank `.d64`/`.d81` right from the tree,
   and add, replace, rename, or delete individual programs inside an existing one - maintaining a valid
   BAM and directory chain so the result loads correctly in VICE or on real hardware. Saving a program
@@ -95,8 +107,8 @@ Full documentation, covering every feature in depth, lives in [docs/](docs/READM
   font/glyph pipeline as the editor, with a standard Windows Page Setup dialog for margins/orientation.
 - **Themes** - Light, Dark, and a Commodore-64-palette theme, swappable at runtime.
 - **Session and tab management** - restores the tabs you had open (including which ones were in Hex
-  Editor mode) the next time you launch READYCode, keeps a history of recently closed tabs to reopen,
-  and accepts `.prg` files dragged in from Windows Explorer.
+  Editor mode) the next time you launch READYCode, and keeps a history of recently closed tabs to
+  reopen.
 - **Code Statistics** - a dialog showing character/word/line counts for the active document, plus its
   tokenized (BASIC) or assembled (assembly) byte count.
 - **Import/Export** - read/write plain-text BASIC alongside native `.prg` files.
