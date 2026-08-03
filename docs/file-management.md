@@ -6,7 +6,7 @@ This page covers the everyday mechanics of working with files in READYCode: the 
 
 Opening a folder (**File > Open Folder...**, Ctrl+K Ctrl+O) populates the Explorer panel with a tree of its contents. Each item shows a color-coded badge and icon for its kind, folder, BASIC `.prg`, machine-language `.prg`, `.d64`/`.d81` disk image, plain BASIC source `.bas`, or plain assembly/other file, so you can tell at a glance what you are looking at.
 
-The tree supports the conventions you would expect from a modern editor: inline creation of new files, folders, and disk images; inline rename; drag-and-drop to move items; cut/copy/paste; delete; and Reveal in File Explorer to jump to the item in Windows Explorer. Right-click any item for its full context menu.
+The tree supports the conventions you would expect from a modern editor: inline creation of new files, folders, and disk images; inline rename; drag-and-drop to move or embed items (see below); cut/copy/paste; delete; and Reveal in File Explorer to jump to the item in Windows Explorer. Right-click any item for its full context menu, including options to disassemble it or send it straight to a C64 Ultimate or VICE - see [Transferring to Hardware and Emulators](c64-ultimate-and-vice.md).
 
 ## Tabs
 
@@ -17,9 +17,17 @@ Every open file gets its own tab, showing the file name and a dot when there are
 - The tab context menu offers Close, Close Others, Close to the Right, Close Saved (Ctrl+K U), and Close All (Ctrl+K W).
 - If enough tabs are open that they overflow the tab bar, a dropdown button appears to list and jump to any of them.
 
-## Opening files by dragging them in
+## Drag and drop
 
-Drag one or more `.prg` files from Windows Explorer onto the READYCode window to open them as new tabs. A drag containing anything other than `.prg` files is rejected.
+Within a tree, dragging an item onto a folder moves it there; dragging it onto a `.d64`/`.d81` disk
+image embeds it directly inside the image instead, assembling `.asm`/`.s` source or tokenizing `.bas`
+source along the way. This works within and between both the local Folder Explorer and the C64U
+Explorer.
+
+Dragging files in from Windows Explorer works the same way: drop them on a folder to copy (or upload,
+for the C64U Explorer) them in, or on a disk image to embed them. Dropped anywhere else in the window,
+they open as new tabs instead - this fallback only accepts `.prg` files, and rejects the drop entirely
+if any file in the selection isn't a `.prg`.
 
 ## Saving, versus importing and exporting
 

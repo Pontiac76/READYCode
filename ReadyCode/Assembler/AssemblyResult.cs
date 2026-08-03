@@ -33,6 +33,14 @@ public class AssemblyResult
     public ushort Origin { get; set; }
 
     /// <summary>
+    /// Gets or sets whether <see cref="Origin"/> came from an explicit ".org" directive in the
+    /// source, rather than the implicit BASIC-loader-stub or standalone-output default. Used to
+    /// decide whether showing per-line addresses (e.g. in the editor's gutter) would be
+    /// meaningful - without an explicit origin, "address" is really just an implementation detail.
+    /// </summary>
+    public bool HasExplicitOrigin { get; set; }
+
+    /// <summary>
     /// Gets or sets every label successfully resolved to an address during pass 1, keyed by
     /// name. Populated even when <see cref="Success"/> is false, since pass 1 assigns every
     /// label's address before any pass-2-only error could occur.
@@ -45,6 +53,21 @@ public class AssemblyResult
     /// <see cref="Labels"/>.
     /// </summary>
     public IReadOnlyDictionary<string, int> Constants { get; set; } = new Dictionary<string, int>();
+
+    /// <summary>
+    /// Gets or sets the address and bytes each source line assembled to, in source order - used
+    /// to show real memory addresses in the editor's gutter (see
+    /// <c>MainWindow.UpdateAsmGutterAddresses</c>). Empty unless <see cref="Success"/> is true.
+    /// </summary>
+    public IReadOnlyList<AsmListingEntry> ListingEntries { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets every source line as parsed during assembly, in source order. Populated
+    /// regardless of <see cref="Success"/>, so a caller that also needs to index the source (e.g.
+    /// <see cref="ReadyCode.Diagnostics.AsmSymbolIndex"/>) can reuse this instead of re-parsing
+    /// the same text a second time.
+    /// </summary>
+    public IReadOnlyList<ParsedAsmLine> ParsedLines { get; set; } = [];
 
     #endregion
 }

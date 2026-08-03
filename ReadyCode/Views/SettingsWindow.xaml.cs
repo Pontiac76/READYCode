@@ -102,14 +102,17 @@ public partial class SettingsWindow : Window
     {
         TreeViewItem item = tag switch
         {
-            "general"       => TreeGeneral,
-            "formatting"    => TreeFormatting,
-            "code-analysis"    => TreeCodeAnalysis,
-            "code-minify"      => TreeMinify,
-            "code-disk-images" => TreeDiskImages,
-            "c64u"             => TreeC64U,
-            "vice"          => TreeVice,
-            _               => TreeAppGeneral,
+            "general"            => TreeGeneral,
+            "basic-formatting"   => TreeBasicFormatting,
+            "basic-code-analysis" => TreeBasicCodeAnalysis,
+            "basic-minify"       => TreeBasicMinify,
+            "code-disk-images"   => TreeDiskImages,
+            "asm-formatting"     => TreeAsmFormatting,
+            "asm-code-analysis"  => TreeAsmCodeAnalysis,
+            "asm-assembler"      => TreeAsmAssembler,
+            "c64u"               => TreeC64U,
+            "vice"               => TreeVice,
+            _                    => TreeAppGeneral,
         };
         item.IsSelected = true;
     }
@@ -119,14 +122,17 @@ public partial class SettingsWindow : Window
         if (e.NewValue is not TreeViewItem item) return;
 
         string tag = item.Tag?.ToString() ?? "";
-        PanelAppGeneral.Visibility   = tag == "app-general"   ? Visibility.Visible : Visibility.Collapsed;
-        PanelGeneral.Visibility      = tag == "general"       ? Visibility.Visible : Visibility.Collapsed;
-        PanelFormatting.Visibility   = tag == "formatting"    ? Visibility.Visible : Visibility.Collapsed;
-        PanelCodeAnalysis.Visibility = tag == "code-analysis"    ? Visibility.Visible : Visibility.Collapsed;
-        PanelMinify.Visibility       = tag == "code-minify"      ? Visibility.Visible : Visibility.Collapsed;
-        PanelDiskImages.Visibility   = tag == "code-disk-images" ? Visibility.Visible : Visibility.Collapsed;
-        PanelC64U.Visibility         = tag == "c64u"             ? Visibility.Visible : Visibility.Collapsed;
-        PanelVice.Visibility         = tag == "vice"          ? Visibility.Visible : Visibility.Collapsed;
+        PanelAppGeneral.Visibility        = tag == "app-general"        ? Visibility.Visible : Visibility.Collapsed;
+        PanelGeneral.Visibility           = tag == "general"            ? Visibility.Visible : Visibility.Collapsed;
+        PanelBasicFormatting.Visibility   = tag == "basic-formatting"   ? Visibility.Visible : Visibility.Collapsed;
+        PanelBasicCodeAnalysis.Visibility = tag == "basic-code-analysis" ? Visibility.Visible : Visibility.Collapsed;
+        PanelBasicMinify.Visibility       = tag == "basic-minify"       ? Visibility.Visible : Visibility.Collapsed;
+        PanelDiskImages.Visibility        = tag == "code-disk-images"   ? Visibility.Visible : Visibility.Collapsed;
+        PanelAsmFormatting.Visibility     = tag == "asm-formatting"     ? Visibility.Visible : Visibility.Collapsed;
+        PanelAsmCodeAnalysis.Visibility   = tag == "asm-code-analysis"  ? Visibility.Visible : Visibility.Collapsed;
+        PanelAsmAssembler.Visibility      = tag == "asm-assembler"      ? Visibility.Visible : Visibility.Collapsed;
+        PanelC64U.Visibility              = tag == "c64u"               ? Visibility.Visible : Visibility.Collapsed;
+        PanelVice.Visibility              = tag == "vice"               ? Visibility.Visible : Visibility.Collapsed;
     }
 
     // ── Disk Images ──────────────────────────────────────────────────────────
@@ -156,8 +162,8 @@ public partial class SettingsWindow : Window
 
     // ── Preset buttons ───────────────────────────────────────────────────────
 
-    private void C64Preset_Click(object sender, RoutedEventArgs e)   => ViewModel.WrapColumnText = "40";
-    private void Vic20Preset_Click(object sender, RoutedEventArgs e) => ViewModel.WrapColumnText = "22";
+    private void C64Preset_Click(object sender, RoutedEventArgs e)   => ViewModel.BasicColumnGuideText = "40";
+    private void Vic20Preset_Click(object sender, RoutedEventArgs e) => ViewModel.BasicColumnGuideText = "22";
 
     // ── OK / Close ───────────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ BASIC programs on a real C64 have limited memory, and every character in a progr
 
 Every pass is careful about context: string literals and `DATA` statement contents are never touched by whitespace removal, notation changes, or comment stripping, so literal data your program depends on cannot be corrupted.
 
-READYCode can also minify automatically whenever you transfer or run a program on the C64 Ultimate, using its own copy of these same options, configured in **Preferences > Settings... > Code > Minify**. This lets you keep your working copy fully readable while still sending a compact version to the machine.
+READYCode can also minify automatically whenever you transfer or run a program on the C64 Ultimate, using its own copy of these same options, configured in **Preferences > Settings... > BASIC > Minify**. This lets you keep your working copy fully readable while still sending a compact version to the machine.
 
 ## Prettify
 

@@ -30,23 +30,16 @@ public sealed class HexGridCanvas : FrameworkElement
     #region Private Fields
 
     private const int BytesPerRow = 16;
-    private const double RowHeight = 22;
-    private const double FontSize = 13;
 
-    // X positions mirror the removed per-row StackPanel's exact margins (Margin="6,1" on the
-    // row, "6,2" on each divider, "8,0"/Width="384" on the Cells ItemsControl with Width="22"
-    // Margin="1,0" cells, "8,0,0,0"/Width="10" on the AsciiChars ItemsControl and its chars) so
-    // the rendered result lines up exactly like the old per-element layout did.
-    private const double OffsetLabelX = 6;
-    private const double OffsetLabelWidth = 64;
-    private const double Divider1X = OffsetLabelX + OffsetLabelWidth + 6;
-    private const double CellsAreaX = Divider1X + 1 + 6 + 8;
-    private const double CellWidth = 24; // 22 content + 1,0 margin each side
-    private const double CellContentWidth = 22;
-    private const double CellsAreaWidth = BytesPerRow * CellWidth;
-    private const double Divider2X = CellsAreaX + CellsAreaWidth + 8 + 6;
-    private const double AsciiAreaX = Divider2X + 1 + 8;
-    private const double AsciiCharWidth = 10;
+    // Every layout dimension in the Public Properties region below (row height, cell width, the
+    // various column X positions) was originally a fixed pixel constant hand-tuned to line up
+    // with HexEditorControl's header row and edit-overlay textbox at 13pt text - they're now
+    // computed from Scale instead, so the whole grid (and, via Scale, the header/edit box) resizes
+    // in proportion when FontSize changes rather than leaving fixed-size cells around
+    // differently-sized text. 13 is that original tuning point, kept as the scale's reference so
+    // FontSize == 13 (the default) reproduces the original fixed values exactly.
+    private const double _baseFontSize = 13;
+    private double _fontSize = _baseFontSize;
 
     private byte[]? _bytes;
     private int _byteCount;
@@ -76,6 +69,64 @@ public sealed class HexGridCanvas : FrameworkElement
     #endregion
 
     #region Public Properties
+
+    /// <summary>
+    /// Gets or sets the font size hex/ASCII text is drawn at - matches
+    /// <c>Settings.EditorFontSize</c>, kept in sync with the Assembler/Disassembler editor so all
+    /// three share one font size. Every cell/column dimension scales proportionally with it (see
+    /// <see cref="Scale"/>), rather than leaving fixed-size cells around differently-sized text.
+    /// </summary>
+    public double FontSize
+    {
+        get => _fontSize;
+        set
+        {
+            if (_fontSize == value) return;
+            _fontSize = value;
+            InvalidateMeasure();
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Gets the ratio of <see cref="FontSize"/> to the 13pt size every layout dimension below was
+    /// originally tuned for - <see cref="HexEditorControl"/> reads this to scale its own header
+    /// row and edit-overlay textbox by the exact same factor, so they stay aligned with the grid.
+    /// </summary>
+    public double Scale => _fontSize / _baseFontSize;
+
+    /// <summary>Gets the height of a single byte row.</summary>
+    public double RowHeight => 22 * Scale;
+
+    /// <summary>Gets the X position of the offset column's label.</summary>
+    public double OffsetLabelX => 6 * Scale;
+
+    /// <summary>Gets the width reserved for the offset column.</summary>
+    public double OffsetLabelWidth => 64 * Scale;
+
+    /// <summary>Gets the X position of the divider between the offset and hex-byte columns.</summary>
+    public double Divider1X => OffsetLabelX + OffsetLabelWidth + 6 * Scale;
+
+    /// <summary>Gets the X position where the hex-byte cells begin.</summary>
+    public double CellsAreaX => Divider1X + 1 * Scale + 6 * Scale + 8 * Scale;
+
+    /// <summary>Gets the total width (content plus margin) of one hex-byte cell.</summary>
+    public double CellWidth => 24 * Scale;
+
+    /// <summary>Gets the width of a hex-byte cell's text content, excluding its margin.</summary>
+    public double CellContentWidth => 22 * Scale;
+
+    /// <summary>Gets the total width of all 16 hex-byte cells in a row.</summary>
+    public double CellsAreaWidth => BytesPerRow * CellWidth;
+
+    /// <summary>Gets the X position of the divider between the hex-byte and ASCII columns.</summary>
+    public double Divider2X => CellsAreaX + CellsAreaWidth + 8 * Scale + 6 * Scale;
+
+    /// <summary>Gets the X position where the ASCII column begins.</summary>
+    public double AsciiAreaX => Divider2X + 1 * Scale + 8 * Scale;
+
+    /// <summary>Gets the width of a single ASCII column character.</summary>
+    public double AsciiCharWidth => 10 * Scale;
 
     /// <summary>Gets the byte offset of the currently selected/active cell.</summary>
     public int SelectedOffset => _selectedOffset;
@@ -516,7 +567,7 @@ public sealed class HexGridCanvas : FrameworkElement
     // Horizontally centered within [x, x+width) if width > 0 (matching the old cells'
     // TextAlignment="Center"), otherwise left-aligned at x (matching the offset label, which
     // never had TextAlignment set); always vertically centered within the row.
-    private static void DrawText(DrawingContext dc, string text, double x, double y, Brush brush, Typeface typeface, double dpi, double width = 0)
+    private void DrawText(DrawingContext dc, string text, double x, double y, Brush brush, Typeface typeface, double dpi, double width = 0)
     {
         var formatted = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, FontSize, brush, dpi);
         double drawX = width > 0 ? x + (width - formatted.Width) / 2 : x;

@@ -23,6 +23,7 @@ using ReadyCode.Assembler;
 using ReadyCode.C64U;
 using ReadyCode.Diagnostics;
 using ReadyCode.Editor;
+using ReadyCode.Formatting;
 using ReadyCode.Minify;
 using ReadyCode.Models;
 using ReadyCode.Prettify;
@@ -104,7 +105,7 @@ public partial class MainWindow : Window
     private const int _maxClosedTabHistory = 20;
     private readonly List<ClosedTabSnapshot> _closedTabHistory = new();
 
-    // Chord shortcut state (Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U)
+    // Chord shortcut state (Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U / Ctrl+K → Ctrl+F)
     private bool _chordCtrlKActive;
 
     // Keyword completion
@@ -118,6 +119,9 @@ public partial class MainWindow : Window
     private Point _dragStartPoint;
     private FileTreeItem? _dragItem;
     private FileTreeItem? _currentDropTarget;
+    private Point _c64uDragStartPoint;
+    private C64UFileItem? _c64uDragItem;
+    private C64UFileItem? _c64uCurrentDropTarget;
 
     #endregion
 
@@ -178,6 +182,7 @@ public partial class MainWindow : Window
         EditMinifyCommand    = new RelayCommand(_ => ExecuteMinifyCode(), _ => HasNonEmptyBasicActiveTab());
         EditPrettifyCommand  = new RelayCommand(_ => ExecutePrettifyCode(), _ => HasNonEmptyBasicActiveTab());
         EditRenumberCommand  = new RelayCommand(_ => ExecuteRenumberCode(), _ => HasNonEmptyBasicActiveTab());
+        EditFormatCommand    = new RelayCommand(_ => ExecuteFormatAsmCode(), _ => HasNonEmptyAsmActiveTab());
         EditGoToLineCommand  = new RelayCommand(_ => ExecuteGoToLine(), _ => HasNonEmptyActiveTab());
         GoToDefinitionCommand = new RelayCommand(_ => ExecuteGoToDefinition(), _ => HasNonEmptyActiveTab());
         PreferencesSettingsCommand = new RelayCommand(_ => SettingsPreferences_Click(this, new RoutedEventArgs()));
@@ -226,13 +231,13 @@ public partial class MainWindow : Window
         Editor.TextArea.SelectionChanged += Editor_SelectionChanged;
         Editor.TextArea.Caret.PositionChanged += Editor_CaretPositionChanged;
 
-        ApplyLineTransformersForLanguage(EditorLanguage.Basic);
+        ApplyLineTransformersForLanguage(EditorLanguage.Basic, C64UFileKind.Bas);
         _currentLineBorderRenderer = new CurrentLineBorderRenderer(Editor);
         Editor.TextArea.TextView.BackgroundRenderers.Add(_currentLineBorderRenderer);
         _errorSquiggleRenderer = new ErrorSquiggleRenderer(Editor);
         Editor.TextArea.TextView.BackgroundRenderers.Add(_errorSquiggleRenderer);
         _diagnosticsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-        _diagnosticsTimer.Tick += (_, _) => { _diagnosticsTimer.Stop(); RunDiagnostics(); RunFolding(); RunVariableIndex(); RunAsmSymbolIndex(); };
+        _diagnosticsTimer.Tick += (_, _) => { _diagnosticsTimer.Stop(); RunDocumentAnalysis(); };
         Editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
             _lineNumberColorizer.ActiveDocumentLineNumber =
@@ -397,6 +402,8 @@ public partial class MainWindow : Window
     public ICommand EditPrettifyCommand  { get; }
     /// <summary>Gets the command that opens the Renumber dialog.</summary>
     public ICommand EditRenumberCommand  { get; }
+    /// <summary>Gets the command that reformats the active assembly tab per the Assembly Formatting settings.</summary>
+    public ICommand EditFormatCommand    { get; }
     /// <summary>Gets the command that opens the Go To Line dialog.</summary>
     public ICommand EditGoToLineCommand  { get; }
     /// <summary>Gets the command that jumps to the BASIC line targeted by the GOTO/GOSUB line number under the caret.</summary>
@@ -542,6 +549,436 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => Editor.Focus());
     }
 
+    private void C64UDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab(DisassemblySource.C64U);
+
+    private void ViceDisassemble_Click(object sender, RoutedEventArgs e) => OpenDisassemblyTab(DisassemblySource.Vice);
+
+    // Opens a new read-only disassembly tab with the address-range toolbar visible, ready for
+    // the user to fill in Start/End and click Disassemble. The tab has no FilePath until Saved
+    // As - see FileSaveAs_Click/SaveTabWithDialog for where IsDisassemblyMode gets cleared once
+    // that happens, turning it into an ordinary editable .asm tab.
+    private void OpenDisassemblyTab(DisassemblySource source)
+    {
+        var tab = new EditorTab
+        {
+            Language = EditorLanguage.Asm,
+            Kind = C64UFileKind.Asm,
+            DisplayName = source == DisassemblySource.Vice ? "Disassembly (VICE).asm" : "Disassembly (C64U).asm",
+            IsDisassemblyMode = true,
+            DisassemblySource = source,
+        };
+        tab.Document.Text = "; Enter a Start and End address above, then click Disassemble.";
+
+        ViewModel.OpenTabs.Add(tab);
+        ActivateTab(tab);
+
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () => DisassemblyToolbar.FocusStartAddress());
+    }
+
+    // Reads the requested memory range from the tab's DisassemblySource (the C64 Ultimate or a
+    // running VICE instance) and disassembles it into the active tab's document. Captures the
+    // tab up front (rather than reusing Editor.Document after the await) so a slow request that
+    // completes after the user switches tabs still lands in the right place instead of
+    // overwriting whatever tab is active by then.
+    private async void DisassemblyToolbar_DisassembleRequested(object? sender, EventArgs e)
+    {
+        var tab = ViewModel.ActiveTab;
+        if (tab == null || !tab.IsDisassemblyMode) return;
+
+        if (!DisassemblyToolbar.TryGetAddressRange(out ushort start, out ushort end, out string? rangeError))
+        {
+            ViewModel.SetStatus(rangeError!, StatusType.Error);
+            return;
+        }
+
+        bool useVice = tab.DisassemblySource == DisassemblySource.Vice;
+        if (useVice && string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+        if (!useVice && string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("C64U URL not set. Go to Preferences > Settings to configure it.", StatusType.Error);
+            return;
+        }
+
+        int length = end - start + 1;
+
+        try
+        {
+            using var _ = BeginBusyCursor();
+            ViewModel.SetStatus(useVice
+                ? $"Reading {length:N0} bytes from VICE…"
+                : $"Reading {length:N0} bytes from the C64 Ultimate…");
+
+            byte[] bytes = useVice
+                ? await new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort).ReadMemoryAsync(start, length)
+                : await new C64UltimateClient().ReadMemoryAsync(ViewModel.Settings.C64UUrl, start, length);
+
+            var result = new Asm6502Disassembler().Disassemble(
+                bytes, start, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+            tab.Document.Text = result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses;
+            tab.IsModified = false;
+
+            // Only touch the shared gutter margin if this tab is still the one showing - a slow
+            // request that completes after the user switched tabs shouldn't repaint whatever
+            // tab is active by then.
+            if (ReferenceEquals(tab, ViewModel.ActiveTab))
+            {
+                _asmLineNumberMargin.LineAddresses = result.LineAddresses;
+                _asmLineNumberMargin.InvalidateMeasure();
+                _asmLineNumberMargin.InvalidateVisual();
+            }
+
+            ViewModel.SetStatus($"Disassembled {length:N0} bytes from ${start:X4}-${end:X4}.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Disassembly failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    // "Disassemble file" - local top-level .ml file in the Explorer tree.
+    private void FileContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item == null) return;
+
+        try
+        {
+            DisassembleFileBytes(File.ReadAllBytes(item.FullPath), item.Name);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error disassembling file: {ex.Message}", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // "Disassemble file" - virtual .ml entry inside a mounted .d64/.d81 in the Explorer tree;
+    // its content is already in memory from when the disk image was expanded.
+    private void LocalDiskEntryContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item?.Content == null) return;
+
+        DisassembleFileBytes(item.Content, item.Name);
+    }
+
+    // "Disassemble file" - a .ml file in the C64U tree, whether a real remote file or a virtual
+    // entry inside a mounted disk image (item.Content already holds the latter's bytes).
+    private async void C64UFileContextDisassemble_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetC64UContextItem(sender);
+        if (item == null) return;
+        if (item.Content == null && ViewModel.C64UFtp == null) return;
+
+        using var _ = BeginBusyCursor();
+        try
+        {
+            byte[] bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
+            DisassembleFileBytes(bytes, item.Name);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error disassembling file: {ex.Message}", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // Decodes a standalone .prg's 2-byte little-endian load-address header, disassembles the
+    // remaining bytes as machine code, and opens the result as a new, ordinary editable .asm tab -
+    // unlike the live-memory "Disassemble at..." flow (see OpenDisassemblyTab), there's no address
+    // range to pick since the whole file is already in hand, so no read-only toolbar is needed.
+    private void DisassembleFileBytes(byte[] prgBytes, string displayName)
+    {
+        if (prgBytes.Length < 2)
+        {
+            MessageBox.Show($"'{displayName}' is too small to disassemble.", "Disassemble File",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        ushort origin = (ushort)(prgBytes[0] | (prgBytes[1] << 8));
+        byte[] codeBytes = prgBytes[2..];
+
+        // A BASIC loader stub (e.g. "10 SYS 2064") tokenizes to bytes that are nonsense as 6502
+        // opcodes - detect it and skip straight to the real machine code's own origin instead.
+        List<string>? stubCommentLines = null;
+        if (new PrgConverter().TryDetectBasicStub(prgBytes, out IReadOnlyList<string> stubLines, out int codeOffset))
+        {
+            origin = (ushort)(origin + (codeOffset - 2));
+            codeBytes = prgBytes[codeOffset..];
+            stubCommentLines = ["; --- BASIC loader stub ---", .. stubLines.Select(line => $"; {line}")];
+        }
+
+        var result = new Asm6502Disassembler().Disassemble(
+            codeBytes, origin, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+
+        var tab = new EditorTab
+        {
+            Language = EditorLanguage.Asm,
+            Kind = C64UFileKind.Asm,
+            DisplayName = $"{Path.GetFileNameWithoutExtension(displayName)} (Disassembled).asm",
+        };
+
+        // The gutter shows the real memory address of each disassembled line, same as the
+        // live-memory "Disassemble at..." flow - shifted past the stub comment's own lines, which
+        // have no address of their own, when one was prepended above.
+        if (stubCommentLines != null)
+        {
+            tab.Document.Text = string.Join(Environment.NewLine, stubCommentLines) + Environment.NewLine + result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses.ToDictionary(
+                kvp => kvp.Key + stubCommentLines.Count, kvp => kvp.Value);
+        }
+        else
+        {
+            tab.Document.Text = result.Source;
+            tab.DisassemblyLineAddresses = result.LineAddresses;
+        }
+
+        ViewModel.OpenTabs.Add(tab);
+        ActivateTab(tab);
+    }
+
+    private enum TransferTarget { Vice, C64U }
+
+    // "Load"/"Run" on C64U/VICE for a local top-level .prg/.ml/.asm file.
+    private async void FileContextLoadC64U_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void FileContextLoadVice_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void FileContextRunC64U_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void FileContextRunVice_Click(object sender, RoutedEventArgs e) => await FileContextLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task FileContextLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetContextItem(sender);
+        if (item == null) return;
+
+        try
+        {
+            byte[] bytes = File.ReadAllBytes(item.FullPath);
+            await LoadOrRunFileAsync(bytes, item.Kind, item.Name, target, run);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error reading file: {ex.Message}", "Load/Run File", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // "Load"/"Run" on C64U/VICE for a .prg/.ml/.asm entry inside a mounted .d64/.d81 in the
+    // Explorer tree; its content is already in memory from when the disk image was expanded.
+    private async void LocalDiskEntryContextLoadC64U_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void LocalDiskEntryContextLoadVice_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void LocalDiskEntryContextRunC64U_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void LocalDiskEntryContextRunVice_Click(object sender, RoutedEventArgs e) => await LocalDiskEntryLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task LocalDiskEntryLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetContextItem(sender);
+        if (item?.Content == null) return;
+
+        await LoadOrRunFileAsync(item.Content, item.Kind, item.Name, target, run);
+    }
+
+    // "Load"/"Run" on C64U/VICE for a .prg/.ml/.asm file in the C64U tree, whether a real remote
+    // file or a virtual entry inside a mounted disk image (item.Content already holds the
+    // latter's bytes) - the same unification OpenC64UFileInEditorAsync already relies on.
+    private async void C64UFileContextLoadC64U_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.C64U, run: false);
+    private async void C64UFileContextLoadVice_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.Vice, run: false);
+    private async void C64UFileContextRunC64U_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.C64U, run: true);
+    private async void C64UFileContextRunVice_Click(object sender, RoutedEventArgs e) => await C64UFileLoadOrRunAsync(sender, TransferTarget.Vice, run: true);
+
+    private async Task C64UFileLoadOrRunAsync(object sender, TransferTarget target, bool run)
+    {
+        var item = GetC64UContextItem(sender);
+        if (item == null) return;
+        if (item.Content == null && ViewModel.C64UFtp == null) return;
+
+        using var _ = BeginBusyCursor();
+        try
+        {
+            byte[] bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
+            await LoadOrRunFileAsync(bytes, item.Kind, item.Name, target, run);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error downloading file: {ex.Message}", "Load/Run File", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    // Decodes bytes into source text, stripping a leading UTF-8 byte-order-mark if present, the
+    // same as File.ReadAllText's own encoding detection does for a file opened directly from
+    // disk. A bare Encoding.UTF8.GetString does not strip it, and a leftover BOM character
+    // corrupts a source file's very first line - e.g. breaking comment/".org" recognition for a
+    // line that should start with ";" or "*", since the line then starts with U+FEFF instead
+    // (which, unlike ordinary whitespace, string.Trim() does not remove either).
+    private static string DecodeSourceText(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    // Sends a file's bytes to VICE or the C64 Ultimate, without needing it open in a tab first.
+    // An .asm file is assembled fresh from its source text (mirroring MainViewModel's own
+    // TryBuildPrgData); a .prg/.ml file's bytes are already the final ready-to-transfer payload.
+    // Shows an "Assembly Errors" dialog and stops, same as the active-tab Run/Load commands, if
+    // assembling fails.
+    private async Task LoadOrRunFileAsync(byte[] rawBytes, C64UFileKind kind, string displayName, TransferTarget target, bool run)
+    {
+        byte[] prgBytes;
+        if (kind == C64UFileKind.Asm)
+        {
+            var result = new Asm6502Assembler().Assemble(
+                DecodeSourceText(rawBytes), ViewModel.Settings.AsmOutputMode == "Standalone",
+                (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    string.Join(Environment.NewLine, result.Errors.Select(err => $"Line {err.LineNumber}: {err.Message}")),
+                    "Assembly Errors", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            prgBytes = result.PrgBytes!;
+        }
+        else
+        {
+            prgBytes = rawBytes;
+        }
+
+        if (target == TransferTarget.Vice)
+        {
+            if (run) await RunFileOnViceAsync(prgBytes, displayName);
+            else await LoadFileOnViceAsync(prgBytes, displayName);
+        }
+        else
+        {
+            if (run) await RunFileOnC64UAsync(prgBytes, displayName);
+            else await LoadFileOnC64UAsync(prgBytes, displayName);
+        }
+    }
+
+    private async Task LoadFileOnViceAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+            var client = new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort);
+            await client.TransferAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+            ViewModel.SetStatus($"'{displayName}' transferred to VICE. Type RUN in the emulator to start it.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    // Runs a file's bytes on VICE: a native autostart RUN if the bytes have a runnable BASIC
+    // entry point of their own, otherwise the same load-then-type-SYS trick RunOnViceAsync uses
+    // for a standalone-origin active tab (see PrgConverter.NeedsSysToRun).
+    private async Task RunFileOnViceAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.ViceEmulatorPath))
+        {
+            ViewModel.SetStatus("Please set the VICE emulator path in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            var client = new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort);
+
+            if (new PrgConverter().NeedsSysToRun(prgBytes, out ushort origin))
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+                await client.TransferAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+
+                await Task.Delay(MainViewModel.SysCommandDelay);
+                await client.TypeAsync($"SYS{origin}\r");
+
+                ViewModel.SetStatus($"'{displayName}' transferred and running on VICE (SYS{origin}).");
+            }
+            else
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to VICE…");
+                await client.RunAsync(ViewModel.Settings.ViceEmulatorPath, prgBytes, displayName, ViewModel.Settings.ViceBringToForeground);
+                ViewModel.SetStatus($"'{displayName}' transferred and running on VICE.");
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer/program execution failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    private async Task LoadFileOnC64UAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("Please set the Commodore 64 Ultimate URL in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+            var client = new C64UltimateClient();
+            await client.LoadPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+            ViewModel.SetStatus($"'{displayName}' transferred to C64 Ultimate.");
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    // Runs a file's bytes on the C64 Ultimate - see RunFileOnViceAsync for the same reasoning,
+    // mirroring RunCurrentProgramAsync's own load_prg-then-typed-SYS trick.
+    private async Task RunFileOnC64UAsync(byte[] prgBytes, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.Settings.C64UUrl))
+        {
+            ViewModel.SetStatus("Please set the Commodore 64 Ultimate URL in Settings - Preferences first.", StatusType.Error);
+            return;
+        }
+
+        try
+        {
+            var client = new C64UltimateClient();
+
+            if (new PrgConverter().NeedsSysToRun(prgBytes, out ushort origin))
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+                await client.LoadPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+
+                await Task.Delay(MainViewModel.SysCommandDelay);
+                await client.TypeAsync(ViewModel.Settings.C64UUrl, $"SYS{origin}\r");
+
+                ViewModel.SetStatus($"'{displayName}' transferred and running on the C64 Ultimate (SYS{origin}).");
+            }
+            else
+            {
+                ViewModel.SetStatus($"Transferring '{displayName}' to C64 Ultimate…");
+                await client.RunPrgAsync(ViewModel.Settings.C64UUrl, prgBytes);
+                ViewModel.SetStatus($"'{displayName}' transferred and running on the C64 Ultimate.");
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Transfer/program execution failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
     private void FileOpen_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
@@ -555,29 +992,190 @@ public partial class MainWindow : Window
 
     // Dropping files from Explorer is only allowed when every dropped file is a .prg - the
     // drop is rejected as a whole (no partial-open) if any other file type is included.
+    // Dropping from Windows Explorer while hovering a folder or disk-image row in either tree
+    // copies/uploads/embeds into it (any file type - see Window_PreviewDrop); hovering anything
+    // else falls back to the original behavior of opening every dropped file as a new tab, only
+    // when all of them are .prg (mixed selections are rejected wholesale, no partial-open).
     private void Window_PreviewDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
-        e.Effects = IsAllPrgFileDrop(e, out _) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
+        if (FindOsDropTarget(e) != null)
+        {
+            e.Effects = DragDropEffects.Copy;
+            return;
+        }
+
+        ClearOsDropHighlight();
+        e.Effects = IsAllPrgFileDrop(e, out _) ? DragDropEffects.Copy : DragDropEffects.None;
     }
 
-    private void Window_PreviewDrop(object sender, DragEventArgs e)
+    private async void Window_PreviewDrop(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
 
         e.Handled = true;
-        if (!IsAllPrgFileDrop(e, out string[] paths)) return;
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        object? target = FindOsDropTarget(e);
+        ClearOsDropHighlight();
 
+        switch (target)
+        {
+            case FileTreeItem localFolder when localFolder.IsFolder:
+                CopyFilesIntoLocalFolder(paths, localFolder);
+                return;
+            case FileTreeItem localDiskImage when localDiskImage.Kind.IsDiskImageKind():
+                foreach (string path in paths)
+                {
+                    if (RejectFolderForDiskImage(path)) continue;
+                    AddFileToLocalDiskImage(path, localDiskImage);
+                }
+                return;
+            case C64UFileItem c64uFolder when c64uFolder.IsFolder:
+                await UploadFilesToC64UFolderAsync(paths, c64uFolder.FullPath);
+                return;
+            case C64UFileItem c64uDiskImage when c64uDiskImage.Kind.IsDiskImageKind():
+                foreach (string path in paths)
+                {
+                    if (RejectFolderForDiskImage(path)) continue;
+                    await AddFileToC64UDiskImageAsync(path, c64uDiskImage);
+                }
+                return;
+        }
+
+        if (!IsAllPrgFileDrop(e, out _)) return;
         foreach (string path in paths)
             OpenFileByPath(path);
+    }
+
+    private static bool RejectFolderForDiskImage(string path)
+    {
+        if (!Directory.Exists(path)) return false;
+        MessageBox.Show($"\"{Path.GetFileName(path)}\" is a folder and can't be added to a disk image.",
+            "Add File Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return true;
     }
 
     private static bool IsAllPrgFileDrop(DragEventArgs e, out string[] paths)
     {
         paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
         return paths.Length > 0 && paths.All(p => p.EndsWith(".prg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Copies each dropped file/folder into targetFolder, matching PasteToFolder's copy-mode
+    // collision handling (skip with a warning rather than overwrite).
+    private void CopyFilesIntoLocalFolder(string[] sourcePaths, FileTreeItem targetFolder)
+    {
+        bool anyCopied = false;
+        foreach (string sourcePath in sourcePaths)
+        {
+            string itemName    = Path.GetFileName(sourcePath);
+            string destination = Path.Combine(targetFolder.FullPath, itemName);
+            bool isFolder       = Directory.Exists(sourcePath);
+            if ((isFolder && Directory.Exists(destination)) || (!isFolder && File.Exists(destination)))
+            {
+                MessageBox.Show($"A {(isFolder ? "folder" : "file")} named \"{itemName}\" already exists in \"{targetFolder.Name}\".",
+                    "Copy Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                continue;
+            }
+            try
+            {
+                if (isFolder) CopyDirectoryRecursive(sourcePath, destination);
+                else          File.Copy(sourcePath, destination);
+                anyCopied = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not copy \"{itemName}\":\n{ex.Message}", "Copy Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        if (!anyCopied) return;
+        targetFolder.RefreshChildren();
+        targetFolder.IsExpanded = true;
+    }
+
+    // Uploads each dropped file as-is (no assemble/tokenize - a C64U folder can hold source
+    // files directly, unlike a disk image) into targetDir, mirroring C64UUploadToolbar_Click's
+    // single-file flow. Folders aren't supported (no recursive-FTP-upload capability exists yet).
+    private async Task UploadFilesToC64UFolderAsync(string[] sourcePaths, string targetDir)
+    {
+        if (ViewModel.C64UFtp == null) return;
+
+        bool anyUploaded = false;
+        foreach (string sourcePath in sourcePaths)
+        {
+            string itemName = Path.GetFileName(sourcePath);
+            if (Directory.Exists(sourcePath))
+            {
+                MessageBox.Show($"\"{itemName}\" is a folder - uploading folders to the C64 Ultimate isn't supported yet.",
+                    "Upload Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                continue;
+            }
+            try
+            {
+                var bytes = File.ReadAllBytes(sourcePath);
+                string remotePath = CombineC64UPath(targetDir, itemName);
+                await ViewModel.C64UFtp.UploadBytesAsync(remotePath, bytes);
+                anyUploaded = true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not upload \"{itemName}\":\n{ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        if (!anyUploaded) return;
+        await RefreshC64UNode(targetDir);
+        ViewModel.SetStatus($"Uploaded {sourcePaths.Length:N0} file(s) to the C64 Ultimate.");
+    }
+
+    // Finds the folder or disk-image row (in either tree) currently under an OS file drag, if
+    // any, and highlights it the same way an internal tree drag-drop does. Window-level
+    // PreviewDragOver/Drop claim every OS file drop (DataFormats.FileDrop) before the
+    // per-TreeViewItem DragOver/Drop handlers ever see it, so this reimplements the same
+    // hit-testing/highlight bookkeeping here instead of relying on those.
+    private object? FindOsDropTarget(DragEventArgs e)
+    {
+        object? dataContext = FindAncestor<TreeViewItem>(e.OriginalSource as DependencyObject)?.DataContext;
+
+        if (dataContext is FileTreeItem localItem && (localItem.IsFolder || localItem.Kind.IsDiskImageKind()))
+        {
+            SetOsDropHighlight(localItem);
+            return localItem;
+        }
+        if (dataContext is C64UFileItem c64uItem && !c64uItem.IsVirtual && (c64uItem.IsFolder || c64uItem.Kind.IsDiskImageKind()))
+        {
+            SetOsDropHighlight(c64uItem);
+            return c64uItem;
+        }
+
+        ClearOsDropHighlight();
+        return null;
+    }
+
+    private void SetOsDropHighlight(FileTreeItem target)
+    {
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
+        if (ReferenceEquals(_currentDropTarget, target)) return;
+        if (_currentDropTarget != null) _currentDropTarget.IsDropTarget = false;
+        _currentDropTarget = target;
+        target.IsDropTarget = true;
+    }
+
+    private void SetOsDropHighlight(C64UFileItem target)
+    {
+        if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
+        if (ReferenceEquals(_c64uCurrentDropTarget, target)) return;
+        if (_c64uCurrentDropTarget != null) _c64uCurrentDropTarget.IsDropTarget = false;
+        _c64uCurrentDropTarget = target;
+        target.IsDropTarget = true;
+    }
+
+    private void ClearOsDropHighlight()
+    {
+        if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
     }
 
     // Shows the Windows "busy" cursor for the scope of the returned IDisposable - used around
@@ -739,6 +1337,7 @@ public partial class MainWindow : Window
         {
             var tab = existingTab ?? new EditorTab { DisplayName = item.Name, VirtualSourceId = sourceId };
             tab.Kind = item.Kind;
+            tab.Language = item.Kind == C64UFileKind.Asm ? EditorLanguage.Asm : EditorLanguage.Basic;
 
             if (wantsHexMode)
             {
@@ -750,7 +1349,7 @@ public partial class MainWindow : Window
                 tab.RawBytes = null;
                 tab.Document.Text = item.Kind == C64UFileKind.Prg
                     ? PadLineNumbers(new PrgConverter().ConvertFromPrg(item.Content))
-                    : Encoding.UTF8.GetString(item.Content);
+                    : DecodeSourceText(item.Content);
             }
 
             if (existingTab == null)
@@ -834,24 +1433,34 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
+            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
             Title = "Add File to Disk Image"
         };
         if (dialog.ShowDialog() != true) return;
 
+        AddFileToLocalDiskImage(dialog.FileName, item);
+    }
+
+    // Builds prgData from a local file path (mirroring TryBuildDiskEntryPrgDataFromBytes, see
+    // there) and adds it to a local disk image's bytes on disk - the shared core behind both
+    // "Add File to Disk Image" and dragging a file onto a disk image row.
+    private void AddFileToLocalDiskImage(string sourcePath, FileTreeItem diskImageItem)
+    {
+        var sourceKind = FileClassifier.Classify(sourcePath, isFolder: false);
+        if (!TryBuildDiskEntryPrgDataFromBytes(File.ReadAllBytes(sourcePath), sourceKind, out byte[]? prgData))
+            return;
+
         try
         {
-            byte[] prgData = dialog.FileName.EndsWith(".bas", StringComparison.OrdinalIgnoreCase)
-                ? new PrgConverter().ConvertToPrg(File.ReadAllText(dialog.FileName, Encoding.UTF8))
-                : File.ReadAllBytes(dialog.FileName);
-            string entryName = Path.GetFileNameWithoutExtension(dialog.FileName);
+            string entryName = Path.GetFileNameWithoutExtension(sourcePath);
+            var entryKind = FileClassifier.Classify(entryName + ".prg", isFolder: false, () => prgData!);
 
-            byte[] diskBytes = File.ReadAllBytes(item.FullPath);
-            var kind = FileClassifier.Classify(item.FullPath, isFolder: false);
-            byte[] updated = DiskImage.ForKind(kind).AddEntry(diskBytes, entryName, C64UFileKind.Prg, prgData);
-            File.WriteAllBytes(item.FullPath, updated);
+            byte[] diskBytes = File.ReadAllBytes(diskImageItem.FullPath);
+            var diskKind = FileClassifier.Classify(diskImageItem.FullPath, isFolder: false);
+            byte[] updated = DiskImage.ForKind(diskKind).AddEntry(diskBytes, entryName, entryKind, prgData!);
+            File.WriteAllBytes(diskImageItem.FullPath, updated);
 
-            RefreshDiskImageNode(item.FullPath);
+            RefreshDiskImageNode(diskImageItem.FullPath);
         }
         catch (Exception ex)
         {
@@ -1074,6 +1683,47 @@ public partial class MainWindow : Window
 
     private enum UltimateDiskAction { Mount, MountAndReset, Load, Run }
 
+    // Builds ready-to-add-to-disk .prg bytes for "Add File to Disk Image" from a local file path:
+    // tokenizes .bas source, assembles .asm/.s source fresh, or passes an already-tokenized
+    // .prg/.ml file through unchanged - see TryBuildDiskEntryPrgDataFromBytes for the shared core
+    // (used directly when the source lives on the C64U rather than the local disk).
+    private bool TryBuildDiskEntryPrgData(string sourcePath, out byte[]? prgData)
+    {
+        var kind = FileClassifier.Classify(sourcePath, isFolder: false);
+        return TryBuildDiskEntryPrgDataFromBytes(File.ReadAllBytes(sourcePath), kind, out prgData);
+    }
+
+    // Builds ready-to-add-to-disk .prg bytes from raw source bytes: assembles .asm/.s source
+    // fresh (mirroring LoadOrRunFileAsync - a real C64 can't do anything useful with raw assembly
+    // text sitting on a disk), tokenizes .bas source, or passes an already-tokenized .prg/.ml
+    // file through unchanged. On an assembly failure, shows the same "Assembly Errors" dialog the
+    // Load/Run commands do and returns false so the caller aborts without touching the disk image.
+    private bool TryBuildDiskEntryPrgDataFromBytes(byte[] sourceBytes, C64UFileKind sourceKind, out byte[]? prgData)
+    {
+        if (sourceKind == C64UFileKind.Asm)
+        {
+            var result = new Asm6502Assembler().Assemble(
+                DecodeSourceText(sourceBytes), ViewModel.Settings.AsmOutputMode == "Standalone",
+                (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    string.Join(Environment.NewLine, result.Errors.Select(err => $"Line {err.LineNumber}: {err.Message}")),
+                    "Assembly Errors", MessageBoxButton.OK, MessageBoxImage.Error);
+                prgData = null;
+                return false;
+            }
+
+            prgData = result.PrgBytes;
+            return true;
+        }
+
+        prgData = sourceKind == C64UFileKind.Bas
+            ? new PrgConverter().ConvertToPrg(DecodeSourceText(sourceBytes))
+            : sourceBytes;
+        return true;
+    }
+
     // Reloads a disk image node's virtual children after its bytes were rewritten (add/delete/
     // rename/replace), so the tree reflects the change without a full explorer reload.
     private void RefreshDiskImageNode(string diskImagePath) => FindItemByPath(diskImagePath)?.RefreshChildren();
@@ -1222,6 +1872,19 @@ public partial class MainWindow : Window
             {
                 ViewModel.ActiveTab.Language = LanguageClassifier.Classify(ViewModel.CurrentFilePath!);
                 ViewModel.ActiveTab.Kind = FileClassifier.Classify(ViewModel.CurrentFilePath!, isFolder: false);
+
+                // Saving a disassembly listing turns it into an ordinary editable .asm file from
+                // now on - re-disassembling in place isn't offered (see EditorTab.IsDisassemblyMode).
+                if (ViewModel.ActiveTab.IsDisassemblyMode)
+                {
+                    ViewModel.ActiveTab.IsDisassemblyMode = false;
+                    ViewModel.ActiveTab.DisassemblyLineAddresses = null;
+                    DisassemblyToolbar.Visibility = Visibility.Collapsed;
+                    Editor.IsReadOnly = false;
+                    _asmLineNumberMargin.LineAddresses = null;
+                    _asmLineNumberMargin.InvalidateMeasure();
+                    _asmLineNumberMargin.InvalidateVisual();
+                }
             }
             SaveFile(ViewModel.CurrentFilePath!);
             RefreshExplorerForSavedFile(ViewModel.CurrentFilePath!);
@@ -1313,6 +1976,23 @@ public partial class MainWindow : Window
             tab.FilePath = dialog.FileName;
             tab.Language = LanguageClassifier.Classify(tab.FilePath);
             tab.Kind = FileClassifier.Classify(tab.FilePath, isFolder: false);
+
+            // Saving a disassembly listing turns it into an ordinary editable .asm file from now
+            // on. Only touch the shared toolbar/Editor UI if this tab actually is the one
+            // currently showing - SaveTabWithDialog can also save a tab that isn't active.
+            if (tab.IsDisassemblyMode)
+            {
+                tab.IsDisassemblyMode = false;
+                tab.DisassemblyLineAddresses = null;
+                if (ReferenceEquals(tab, ViewModel.ActiveTab))
+                {
+                    DisassemblyToolbar.Visibility = Visibility.Collapsed;
+                    Editor.IsReadOnly = false;
+                    _asmLineNumberMargin.LineAddresses = null;
+                    _asmLineNumberMargin.InvalidateMeasure();
+                    _asmLineNumberMargin.InvalidateVisual();
+                }
+            }
         }
         try
         {
@@ -1416,6 +2096,10 @@ public partial class MainWindow : Window
     private bool HasNonEmptyBasicActiveTab() =>
         HasNonEmptyActiveTab() && ViewModel.ActiveTab?.Language != EditorLanguage.Asm;
 
+    // Gates Format Code, the assembly counterpart of the BASIC-only commands above.
+    private bool HasNonEmptyAsmActiveTab() =>
+        HasNonEmptyActiveTab() && ViewModel.ActiveTab?.Language == EditorLanguage.Asm;
+
     // Gates Cut/Copy, which need an actual selection rather than just non-empty content - routes
     // to the hex grid's own selection when a hex tab is active, since Editor's SelectionLength
     // reflects whatever text tab it was last bound to, not the (invisible) hex tab.
@@ -1471,9 +2155,16 @@ public partial class MainWindow : Window
         // Visibility.Collapsed, since a collapsed subtree doesn't participate in layout or fire
         // Loaded events for its elements at all.
         bool isHexMode = tab?.IsHexMode == true;
-        Editor.Visibility = tab != null && !isHexMode ? Visibility.Visible : Visibility.Collapsed;
+        EditorContainer.Visibility = tab != null && !isHexMode ? Visibility.Visible : Visibility.Collapsed;
         HexEditor.Visibility = isHexMode ? Visibility.Visible : Visibility.Collapsed;
         EmptyStateImage.Visibility = tab != null ? Visibility.Collapsed : Visibility.Visible;
+
+        bool isDisassembly = tab?.IsDisassemblyMode == true;
+        DisassemblyToolbar.Visibility = isDisassembly ? Visibility.Visible : Visibility.Collapsed;
+        Editor.IsReadOnly = isDisassembly;
+        _asmLineNumberMargin.LineAddresses = tab?.DisassemblyLineAddresses;
+        _asmLineNumberMargin.InvalidateMeasure();
+        _asmLineNumberMargin.InvalidateVisual();
 
         if (tab != null && tab.IsHexMode)
         {
@@ -1498,12 +2189,12 @@ public partial class MainWindow : Window
             // counts as the visible text changing), so the guard must still be up here -
             // otherwise Editor_TextChanged marks the freshly activated tab as modified.
             Editor.Document = tab.Document;
-            ApplyLineTransformersForLanguage(tab.Language);
+            ApplyLineTransformersForLanguage(tab.Language, tab.Kind);
             Editor.CaretOffset = Math.Min(tab.CaretOffset, tab.Document.TextLength);
             Editor.ScrollToVerticalOffset(tab.ScrollOffsetY);
             Editor.Focus();
 
-            if (ViewModel.Settings.EnableCodeFolding)
+            if (IsCodeFoldingEnabled(tab.Language))
             {
                 _foldingManager = FoldingManager.Install(Editor.TextArea);
                 RunFolding();
@@ -1511,8 +2202,13 @@ public partial class MainWindow : Window
                     fs.IsFolded = tab.CollapsedFoldStartOffsets.Contains(fs.StartOffset);
             }
 
-            RunVariableIndex();
-            RunAsmSymbolIndex();
+            // Assigning Editor.Document above already armed the debounce timer via
+            // Editor_TextChanged - run the full analysis for the newly active tab right now
+            // instead of waiting ~300ms for it (so squiggles/symbols/gutter addresses are correct
+            // immediately), then cancel that now-redundant pending tick so the exact same work
+            // doesn't just repeat itself a moment later.
+            RunDocumentAnalysis();
+            _diagnosticsTimer.Stop();
         }
         else
         {
@@ -1554,7 +2250,7 @@ public partial class MainWindow : Window
     // FindHighlightColorizer is language-agnostic and stays active either way. Also shows a
     // sequential editor-line-number gutter for Asm only - BASIC already shows its own line
     // numbers as ordinary source text, so a duplicate gutter would look redundant there.
-    private void ApplyLineTransformersForLanguage(EditorLanguage language)
+    private void ApplyLineTransformersForLanguage(EditorLanguage language, C64UFileKind kind)
     {
         var transformers = Editor.TextArea.TextView.LineTransformers;
         transformers.Clear();
@@ -1587,13 +2283,24 @@ public partial class MainWindow : Window
 
         transformers.Add(_findHighlightColorizer);
 
-        Editor.FontFamily = language == EditorLanguage.Asm ? _asmEditorFont : _basicEditorFont;
-
         bool isAsm = language == EditorLanguage.Asm;
         bool isBasic = language == EditorLanguage.Basic;
-        _petsciiGlyphGenerator.IsAsmMode = !isBasic;
+
+        // A .bas or manifest/plain-text file is plain ASCII source - unlike a detokenized .prg,
+        // which is styled to look like what ends up on a real C64 screen once tokenized/transferred.
+        bool isAsciiStyled = isAsm || kind == C64UFileKind.Bas || language == EditorLanguage.PlainText;
+        Editor.FontFamily = isAsciiStyled ? _asmEditorFont : _basicEditorFont;
+        _petsciiGlyphGenerator.IsAsmMode = isAsciiStyled;
         Editor.TextArea.TextView.Redraw();
         ApplyVariableExplorerVisibility();
+
+        // Minify/Prettify/Renumber are BASIC-only text transforms that would corrupt assembly
+        // source (same reasoning as HasNonEmptyBasicActiveTab) - hidden entirely for Asm rather
+        // than just disabled, with Format Code (the Asm counterpart) shown in their place.
+        MinifyMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        PrettifyMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        RenumberMenuItem.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        FormatMenuItem.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
 
         // The BASIC Keywords / ASM Mnemonics activity-bar buttons only make sense for their
         // matching language - hide whichever doesn't apply, closing its panel first if it was
@@ -1613,6 +2320,11 @@ public partial class MainWindow : Window
             CloseRightPanel(AsmKeywordsPanel);
             ViewModel.IsRightPanelOpen = RightPanelToggles.Any(t => t.Toggle.IsChecked == true);
         }
+
+        // BASIC and assembly have their own column guide column - re-apply now that
+        // ViewModel.ActiveTab's language has changed, rather than leaving the previous tab's
+        // ruler position on screen until some unrelated trigger (Settings close, etc.) refreshes it.
+        UpdateColumnRulerPosition();
     }
 
     // Cycles the active tab forward (right) or backward (left) through ViewModel.OpenTabs,
@@ -1875,7 +2587,7 @@ public partial class MainWindow : Window
         Editor.SelectAll();
     }
 
-    // ── Chord shortcut: Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U ───────────────────
+    // ── Chord shortcut: Ctrl+K → Ctrl+C / Ctrl+K → Ctrl+U / Ctrl+K → Ctrl+F ──
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -1939,6 +2651,7 @@ public partial class MainWindow : Window
                 if (e.Key == Key.C) { ExecuteCommentSelection();   e.Handled = true; return; }
                 if (e.Key == Key.U) { ExecuteUncommentSelection(); e.Handled = true; return; }
                 if (e.Key == Key.O) { OpenFolderDialog();          e.Handled = true; return; }
+                if (e.Key == Key.F) { ExecuteFormatAsmCode();      e.Handled = true; return; }
             }
             else if (Keyboard.Modifiers == ModifierKeys.None)
             {
@@ -2059,6 +2772,31 @@ public partial class MainWindow : Window
         finally { doc.EndUpdate(); }
 
         ViewModel.SetStatus("Code renumbered.");
+    }
+
+    // ── Format (assembly) ───────────────────────────────────────────────────
+
+    // The assembly counterpart of Minify/Prettify/Renumber above - reformats the whole document
+    // in one shot per the Assembly Formatting settings (mnemonic indent column, comment alignment
+    // column), rather than only as-you-type via Enter (see InsertAsmNewlineWithIndent).
+    private void ExecuteFormatAsmCode()
+    {
+        var doc = Editor.Document;
+        if (doc == null || ViewModel.ActiveTab?.Language != EditorLanguage.Asm || string.IsNullOrWhiteSpace(doc.Text)) return;
+
+        string formatted = AsmCodeFormatter.Format(doc.Text, ViewModel.Settings.AsmMnemonicIndentColumn, ViewModel.Settings.AsmCommentAlignColumn);
+
+        if (formatted == doc.Text)
+        {
+            ViewModel.SetStatus("No changes — code is already formatted.");
+            return;
+        }
+
+        doc.BeginUpdate();
+        try { doc.Text = formatted; }
+        finally { doc.EndUpdate(); }
+
+        ViewModel.SetStatus("Code formatted.");
     }
 
     // ── Editor context menu ───────────────────────────────────────────────────
@@ -2661,38 +3399,6 @@ public partial class MainWindow : Window
         if (item != null) await OpenC64UFileInEditorAsync(item, forceHex: true);
     }
 
-    private async void C64UFileContextRun_Click(object sender, RoutedEventArgs e)
-    {
-        var item = GetC64UContextItem(sender);
-        if (item == null || ViewModel.C64UFtp == null) return;
-
-        try
-        {
-            byte[] prgData = await DownloadAsPrgAsync(item);
-            await ViewModel.RunOnC64UAsync(prgData);
-        }
-        catch (Exception ex)
-        {
-            ViewModel.SetStatus($"Run failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
-    private async void C64UFileContextLoad_Click(object sender, RoutedEventArgs e)
-    {
-        var item = GetC64UContextItem(sender);
-        if (item == null || ViewModel.C64UFtp == null) return;
-
-        try
-        {
-            byte[] prgData = await DownloadAsPrgAsync(item);
-            await ViewModel.LoadOnC64UAsync(prgData);
-        }
-        catch (Exception ex)
-        {
-            ViewModel.SetStatus($"Load failed: {ex.Message}", StatusType.Error);
-        }
-    }
-
     private async void C64UFileContextMountA_Click(object sender, RoutedEventArgs e)
     {
         var item = GetC64UContextItem(sender);
@@ -2740,24 +3446,42 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|All Files (*.*)|*.*",
+            Filter = "Commodore 64 Programs (*.prg)|*.prg|BASIC Source (*.bas)|*.bas|6502 Assembly (*.asm;*.s)|*.asm;*.s|All Files (*.*)|*.*",
             Title = "Add File to Disk Image"
         };
         if (dialog.ShowDialog() != true) return;
 
+        await AddFileToC64UDiskImageAsync(dialog.FileName, item);
+    }
+
+    // Builds prgData from a local file path and adds it to a C64U disk image mounted over FTP -
+    // the shared core behind both "Add File to Disk Image" and dragging a local file onto a C64U
+    // disk image row.
+    private async Task AddFileToC64UDiskImageAsync(string sourcePath, C64UFileItem diskImageItem)
+    {
+        if (ViewModel.C64UFtp == null || !TryBuildDiskEntryPrgData(sourcePath, out byte[]? prgData)) return;
+
+        string entryName = Path.GetFileNameWithoutExtension(sourcePath);
+        await AddEntryToC64UDiskImageAsync(prgData!, entryName, diskImageItem);
+    }
+
+    // Adds already-built prgData to a C64U disk image mounted over FTP - the shared core behind
+    // AddFileToC64UDiskImageAsync (source is a local file path) and dragging an already-uploaded
+    // C64U file onto a disk image row (source is bytes already in hand/downloaded).
+    private async Task AddEntryToC64UDiskImageAsync(byte[] prgData, string entryName, C64UFileItem diskImageItem)
+    {
+        if (ViewModel.C64UFtp == null) return;
+
         try
         {
-            byte[] prgData = dialog.FileName.EndsWith(".bas", StringComparison.OrdinalIgnoreCase)
-                ? new PrgConverter().ConvertToPrg(File.ReadAllText(dialog.FileName, Encoding.UTF8))
-                : File.ReadAllBytes(dialog.FileName);
-            string entryName = Path.GetFileNameWithoutExtension(dialog.FileName);
+            var entryKind = FileClassifier.Classify(entryName + ".prg", isFolder: false, () => prgData);
 
-            byte[] diskBytes = await ViewModel.C64UFtp.DownloadBytesAsync(item.FullPath);
-            var kind = FileClassifier.Classify(item.FullPath, isFolder: false);
-            byte[] updated = DiskImage.ForKind(kind).AddEntry(diskBytes, entryName, C64UFileKind.Prg, prgData);
-            await ViewModel.C64UFtp.UploadBytesAsync(item.FullPath, updated);
+            byte[] diskBytes = await ViewModel.C64UFtp.DownloadBytesAsync(diskImageItem.FullPath);
+            var diskKind = FileClassifier.Classify(diskImageItem.FullPath, isFolder: false);
+            byte[] updated = DiskImage.ForKind(diskKind).AddEntry(diskBytes, entryName, entryKind, prgData);
+            await ViewModel.C64UFtp.UploadBytesAsync(diskImageItem.FullPath, updated);
 
-            await RefreshC64UNode(item.FullPath);
+            await RefreshC64UNode(diskImageItem.FullPath);
         }
         catch (Exception ex)
         {
@@ -2863,6 +3587,7 @@ public partial class MainWindow : Window
 
             var tab = existingTab ?? new EditorTab { DisplayName = item.Name, VirtualSourceId = sourceId };
             tab.Kind = item.Kind;
+            tab.Language = item.Kind == C64UFileKind.Asm ? EditorLanguage.Asm : EditorLanguage.Basic;
 
             if (wantsHexMode)
             {
@@ -2874,7 +3599,7 @@ public partial class MainWindow : Window
                 tab.RawBytes = null;
                 tab.Document.Text = item.Kind == C64UFileKind.Prg
                     ? PadLineNumbers(new PrgConverter().ConvertFromPrg(bytes))
-                    : Encoding.UTF8.GetString(bytes);
+                    : DecodeSourceText(bytes);
             }
 
             if (existingTab == null)
@@ -2887,18 +3612,6 @@ public partial class MainWindow : Window
             MessageBox.Show($"Error opening file: {ex.Message}", "Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);
         }
-    }
-
-    // Downloads the file and, for BASIC source, tokenizes it into PRG format ready to send to
-    // the C64 Ultimate. Already-tokenized .prg files (including those found inside a mounted
-    // .d64 image) pass through unchanged.
-    private async Task<byte[]> DownloadAsPrgAsync(C64UFileItem item)
-    {
-        var bytes = item.Content ?? await ViewModel.C64UFtp!.DownloadBytesAsync(item.FullPath);
-        if (item.Kind == C64UFileKind.Prg) return bytes;
-
-        string text = Encoding.UTF8.GetString(bytes);
-        return new PrgConverter().ConvertToPrg(ViewModel.PrepareCodeForTransfer(text));
     }
 
     private async Task DeleteC64UItemAsync(C64UFileItem item)
@@ -3167,8 +3880,21 @@ public partial class MainWindow : Window
 
     private static C64UFileItem? GetC64UContextItem(object sender)
     {
-        var contextMenu = (sender as MenuItem)?.Parent as ContextMenu;
+        var contextMenu = GetOwningContextMenu(sender as MenuItem);
         return (contextMenu?.PlacementTarget as TreeViewItem)?.DataContext as C64UFileItem;
+    }
+
+    // A MenuItem's Parent is the ContextMenu directly only when it's a top-level item; for one
+    // inside a submenu (e.g. "C64U" under "Run"), Parent is the enclosing MenuItem instead, so a
+    // single Parent lookup returns null for those. Walks up through as many nested submenu levels
+    // as needed to find the real owning ContextMenu.
+    private static ContextMenu? GetOwningContextMenu(MenuItem? item)
+    {
+        DependencyObject? node = item;
+        while (node is MenuItem menuItem)
+            node = menuItem.Parent as DependencyObject;
+
+        return node as ContextMenu;
     }
 
     private C64UFileItem? FindC64UItemByPath(string path)
@@ -3268,7 +3994,8 @@ public partial class MainWindow : Window
 
         if (ViewModel.ActiveTab?.Language == EditorLanguage.Asm)
         {
-            var asmResult = new Asm6502Assembler().Assemble(text);
+            var asmResult = new Asm6502Assembler().Assemble(
+                text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
             byteLabel = "Assembled bytes";
             if (asmResult.Success)
             {
@@ -3681,13 +4408,20 @@ public partial class MainWindow : Window
         var delta = e.GetPosition(null) - _dragStartPoint;
         if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
             Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
-        DragDrop.DoDragDrop((DependencyObject)sender, _dragItem, DragDropEffects.Move);
+        // Move onto a folder, Copy onto a disk image (see FileTreeItem_DragOver) - both must be
+        // allowed here, or WPF silently rejects whichever one a DragOver handler tries to request
+        // that isn't in this set, showing the "no drop" cursor no matter what Effects is set to.
+        DragDrop.DoDragDrop((DependencyObject)sender, _dragItem, DragDropEffects.Move | DragDropEffects.Copy);
     }
 
+    // A folder target moves the dragged item in; a disk-image target embeds a copy of it as a
+    // new entry instead (see IsValidDrop/FileTreeItem_Drop) - only a single file can become a
+    // disk entry, so a dragged folder is rejected there.
     private void FileTreeItem_DragOver(object sender, DragEventArgs e)
     {
         var target = (sender as TreeViewItem)?.DataContext as FileTreeItem;
-        if (target == null || !target.IsFolder || _dragItem == null || !IsValidDrop(_dragItem, target))
+        bool isValidTarget = target != null && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _dragItem == null || !IsValidDrop(_dragItem, target!))
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
@@ -3697,9 +4431,9 @@ public partial class MainWindow : Window
         {
             if (_currentDropTarget != null) _currentDropTarget.IsDropTarget = false;
             _currentDropTarget = target;
-            target.IsDropTarget = true;
+            target!.IsDropTarget = true;
         }
-        e.Effects = DragDropEffects.Move;
+        e.Effects = target!.Kind.IsDiskImageKind() ? DragDropEffects.Copy : DragDropEffects.Move;
         e.Handled = true;
     }
 
@@ -3716,11 +4450,22 @@ public partial class MainWindow : Window
     private void FileTreeItem_Drop(object sender, DragEventArgs e)
     {
         if (_currentDropTarget != null) { _currentDropTarget.IsDropTarget = false; _currentDropTarget = null; }
-        var targetFolder = (sender as TreeViewItem)?.DataContext as FileTreeItem;
-        if (targetFolder == null || !targetFolder.IsFolder || _dragItem == null || !IsValidDrop(_dragItem, targetFolder))
+        var target = (sender as TreeViewItem)?.DataContext as FileTreeItem;
+        bool isValidTarget = target != null && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _dragItem == null || !IsValidDrop(_dragItem, target!))
         {
             _dragItem = null; e.Handled = true; return;
         }
+
+        if (target!.Kind.IsDiskImageKind())
+        {
+            AddFileToLocalDiskImage(_dragItem.FullPath, target);
+            _dragItem = null;
+            e.Handled = true;
+            return;
+        }
+
+        var targetFolder = target;
         string itemName    = Path.GetFileName(_dragItem.FullPath);
         string destination = Path.Combine(targetFolder.FullPath, itemName);
         if ((_dragItem.IsFolder && Directory.Exists(destination)) || (!_dragItem.IsFolder && File.Exists(destination)))
@@ -3744,6 +4489,128 @@ public partial class MainWindow : Window
             MessageBox.Show($"Could not move \"{itemName}\":\n{ex.Message}", "Move Failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         e.Handled = true;
+    }
+
+    private void C64UFileTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _c64uDragStartPoint = e.GetPosition(null);
+        var item = (e.OriginalSource as FrameworkElement)?.DataContext as C64UFileItem;
+        // Virtual entries (found inside a mounted .d64) have no real FTP path of their own, so
+        // they can't be dragged/moved like a real remote file.
+        _c64uDragItem = item?.IsVirtual == true ? null : item;
+    }
+
+    private void C64UFileTreeItem_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _c64uDragItem == null) return;
+        var delta = e.GetPosition(null) - _c64uDragStartPoint;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        // Move onto a folder, Copy onto a disk image (see C64UFileTreeItem_DragOver) - both must
+        // be allowed here, or WPF silently rejects whichever one a DragOver handler tries to
+        // request that isn't in this set, showing the "no drop" cursor no matter what Effects is
+        // set to.
+        DragDrop.DoDragDrop((DependencyObject)sender, _c64uDragItem, DragDropEffects.Move | DragDropEffects.Copy);
+    }
+
+    // A folder target moves the dragged item in (FTP rename to a path under the new directory);
+    // a disk-image target embeds a copy of it as a new entry instead (see C64UFileTreeItem_Drop) -
+    // mirrors FileTreeItem_DragOver's local-tree equivalent.
+    private void C64UFileTreeItem_DragOver(object sender, DragEventArgs e)
+    {
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        bool isValidTarget = target != null && !target.IsVirtual && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _c64uDragItem == null || !IsValidC64UDrop(_c64uDragItem, target!))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+        if (!ReferenceEquals(_c64uCurrentDropTarget, target))
+        {
+            if (_c64uCurrentDropTarget != null) _c64uCurrentDropTarget.IsDropTarget = false;
+            _c64uCurrentDropTarget = target;
+            target!.IsDropTarget = true;
+        }
+        e.Effects = target!.Kind.IsDiskImageKind() ? DragDropEffects.Copy : DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void C64UFileTreeItem_DragLeave(object sender, DragEventArgs e)
+    {
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        if (target != null && ReferenceEquals(_c64uCurrentDropTarget, target))
+        {
+            target.IsDropTarget = false;
+            _c64uCurrentDropTarget = null;
+        }
+    }
+
+    private async void C64UFileTreeItem_Drop(object sender, DragEventArgs e)
+    {
+        if (_c64uCurrentDropTarget != null) { _c64uCurrentDropTarget.IsDropTarget = false; _c64uCurrentDropTarget = null; }
+        var target = (sender as TreeViewItem)?.DataContext as C64UFileItem;
+        bool isValidTarget = target != null && !target.IsVirtual && (target.IsFolder || target.Kind.IsDiskImageKind());
+        if (!isValidTarget || _c64uDragItem == null || !IsValidC64UDrop(_c64uDragItem, target!) || ViewModel.C64UFtp == null)
+        {
+            _c64uDragItem = null; e.Handled = true; return;
+        }
+
+        var dragItem = _c64uDragItem;
+        _c64uDragItem = null;
+        e.Handled = true;
+
+        if (target!.Kind.IsDiskImageKind())
+        {
+            try
+            {
+                byte[] bytes = dragItem.Content ?? await ViewModel.C64UFtp.DownloadBytesAsync(dragItem.FullPath);
+                if (!TryBuildDiskEntryPrgDataFromBytes(bytes, dragItem.Kind, out byte[]? prgData)) return;
+
+                string entryName = Path.GetFileNameWithoutExtension(dragItem.Name);
+                await AddEntryToC64UDiskImageAsync(prgData!, entryName, target);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not add file to disk image:\n{ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            return;
+        }
+
+        string itemName = dragItem.Name;
+        string sourceParent = GetC64UParentPath(dragItem.FullPath);
+        string destination = CombineC64UPath(target.FullPath, itemName);
+        try
+        {
+            await ViewModel.C64UFtp.RenameAsync(dragItem.FullPath, destination);
+            await RefreshC64UNode(sourceParent);
+            await RefreshC64UNode(target.FullPath);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not move \"{itemName}\":\n{ex.Message}", "Move Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static bool IsValidC64UDrop(C64UFileItem source, C64UFileItem target)
+    {
+        // A disk image can only gain a new entry (a single file, not a folder full of them, and
+        // not another disk image, which the real C64 format has no way to nest) - the
+        // move-related checks below (same-parent/self-nesting) are meaningless for this target
+        // kind anyway.
+        if (target.Kind.IsDiskImageKind()) return !source.IsFolder && !source.Kind.IsDiskImageKind();
+
+        if (!target.IsFolder) return false;
+        if (string.Equals(GetC64UParentPath(source.FullPath), target.FullPath, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (source.IsFolder)
+        {
+            string srcPrefix = source.FullPath.TrimEnd('/') + "/";
+            string tgtPrefix = target.FullPath.TrimEnd('/') + "/";
+            if (tgtPrefix.StartsWith(srcPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
     }
 
     private void RootHeader_DragOver(object sender, DragEventArgs e)
@@ -3931,6 +4798,12 @@ public partial class MainWindow : Window
 
     private static bool IsValidDrop(FileTreeItem source, FileTreeItem target)
     {
+        // A disk image can only gain a new entry (a single file, not a folder full of them, and
+        // not another disk image, which the real C64 format has no way to nest) - the
+        // move-related checks below (same-parent/self-nesting) are meaningless for this target
+        // kind anyway.
+        if (target.Kind.IsDiskImageKind()) return !source.IsFolder && !source.Kind.IsDiskImageKind();
+
         if (!target.IsFolder) return false;
         if (string.Equals(Path.GetDirectoryName(source.FullPath), target.FullPath, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -4160,13 +5033,7 @@ public partial class MainWindow : Window
 
     private static FileTreeItem? GetContextItem(object sender)
     {
-        // Menu items may be nested inside submenu MenuItems (e.g. VICE/Ultimate disk actions),
-        // so walk up through ItemsControl parents until we reach the owning ContextMenu.
-        ItemsControl? parent = (sender as MenuItem)?.Parent as ItemsControl;
-        while (parent is MenuItem menuItem)
-            parent = menuItem.Parent as ItemsControl;
-
-        var contextMenu = parent as ContextMenu;
+        var contextMenu = GetOwningContextMenu(sender as MenuItem);
         return (contextMenu?.PlacementTarget as TreeViewItem)?.DataContext as FileTreeItem;
     }
 
@@ -4719,6 +5586,14 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGhostText()
     {
+        // Completion doesn't make sense for a read-only tab (e.g. a disassembly listing) - there's
+        // nothing for the user to be typing towards.
+        if (Editor.IsReadOnly)
+        {
+            ClearGhostText();
+            return;
+        }
+
         // Don't update while a popup completion window is open.
         if (_completionWindow != null)
         {
@@ -4781,6 +5656,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void OpenCompletionPopup()
     {
+        if (Editor.IsReadOnly) return;
+
         _completionWindow?.Close();
         ClearGhostText();
 
@@ -5266,20 +6143,52 @@ public partial class MainWindow : Window
         if (!_activatingTab && !ViewModel.IsModified)
             ViewModel.IsModified = true;
 
+        // A "Disassemble file" tab starts with real memory addresses in the gutter, but unlike a
+        // live-memory disassembly tab (IsDisassemblyMode) it stays editable, so once the user
+        // changes anything the line/address pairing can no longer be trusted. Just clear the
+        // snapshot here - the debounced RunDocumentAnalysis this same edit already armed will run
+        // UpdateAsmGutterAddresses shortly, which takes back over now that the snapshot is gone,
+        // showing addresses recomputed from the edited source instead (or plain line numbers, if
+        // it no longer assembles cleanly).
+        if (!_activatingTab && ViewModel.ActiveTab is { IsDisassemblyMode: false, DisassemblyLineAddresses: not null } tab)
+            tab.DisassemblyLineAddresses = null;
+
         // Debounced so a full re-analysis doesn't run on every keystroke; also covers tab
         // switches, since assigning Editor.Document in ActivateTab raises this same event.
         _diagnosticsTimer.Stop();
         _diagnosticsTimer.Start();
     }
 
+    // Runs every debounced analysis pass for the active document in one go: diagnostics, folding,
+    // and (language-specific) variable/symbol indexing. For an assembly tab, Asm6502Assembler's
+    // full two-pass assemble is genuinely expensive on a large file, so it's run exactly once here
+    // and threaded into both RunDiagnostics and RunAsmSymbolIndex, rather than each independently
+    // re-assembling the same unchanged text (previously the dominant cost behind a slow load/tab
+    // switch on a several-hundred-line assembly file). Called by the debounce timer as the user
+    // types, and directly by ActivateTab right after switching tabs - see the comment there for
+    // why that call site also stops the timer immediately afterward.
+    private void RunDocumentAnalysis()
+    {
+        var document = Editor.Document;
+        AssemblyResult? asmResult = document != null && ViewModel.ActiveTab?.Language == EditorLanguage.Asm
+            ? new Asm6502Assembler().Assemble(
+                document.Text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress)
+            : null;
+
+        RunDiagnostics(asmResult);
+        RunFolding();
+        RunVariableIndex();
+        RunAsmSymbolIndex(asmResult);
+    }
+
     // Re-analyzes the active document and refreshes the squiggle underlines: for BASIC, undefined
     // GOTO/GOSUB/THEN targets, unmatched FOR/NEXT, unterminated strings, and duplicate line
     // numbers; for assembly, whatever Asm6502Assembler reports as errors.
-    private void RunDiagnostics()
+    private void RunDiagnostics(AssemblyResult? asmResult = null)
     {
         bool isAsm = ViewModel.ActiveTab?.Language == EditorLanguage.Asm;
-        _currentDiagnostics = Editor.Document != null && ViewModel.Settings.EnableLinting
-            ? (isAsm ? AsmDiagnostics.Analyze(Editor.Document.Text) : BasicDiagnostics.Analyze(Editor.Document.Text))
+        _currentDiagnostics = Editor.Document != null && ViewModel.Settings.EnableLinting && !Editor.IsReadOnly
+            ? (isAsm ? AsmDiagnostics.Analyze(Editor.Document.Text, asmResult) : BasicDiagnostics.Analyze(Editor.Document.Text))
             : Array.Empty<EditorDiagnostic>();
         _errorSquiggleRenderer.SetDiagnostics(_currentDiagnostics);
         Editor.TextArea.TextView.Redraw();
@@ -5313,10 +6222,16 @@ public partial class MainWindow : Window
     // own install/uninstall lifecycle, and re-runs diagnostics so squiggles appear/clear
     // immediately. Linting has no persistent state to unwind - RunDiagnostics already clears
     // _currentDiagnostics when the setting is off.
+    // BASIC and assembly have their own code folding toggle (folding REM/FOR-NEXT blocks vs.
+    // runs of ";" comments) - null (no active tab) falls back to the BASIC setting, harmless
+    // since both call sites already guard on there being a document to fold.
+    private bool IsCodeFoldingEnabled(EditorLanguage? language) =>
+        language == EditorLanguage.Asm ? ViewModel.Settings.AsmEnableCodeFolding : ViewModel.Settings.EnableCodeFolding;
+
     private void ApplyCodeAnalysisSettings()
     {
-        bool foldingEnabled = ViewModel.Settings.EnableCodeFolding;
         EditorTab? activeTab = ViewModel.ActiveTab;
+        bool foldingEnabled = IsCodeFoldingEnabled(activeTab?.Language);
 
         if (foldingEnabled && _foldingManager == null && Editor.Document != null)
         {
@@ -5390,7 +6305,7 @@ public partial class MainWindow : Window
     // underlying AssemblyResult in _lastAsmResult so the hover tooltip can show resolved
     // label/constant values without re-assembling on every mouse move. Assembly-specific - see
     // RunVariableIndex for BASIC's equivalent.
-    private void RunAsmSymbolIndex()
+    private void RunAsmSymbolIndex(AssemblyResult? asmResult = null)
     {
         var constants = ViewModel.ConstantSymbols.Symbols;
         var labels = ViewModel.LabelSymbols.Symbols;
@@ -5403,10 +6318,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        var asmResult = new Asm6502Assembler().Assemble(document.Text);
+        asmResult ??= new Asm6502Assembler().Assemble(
+            document.Text, ViewModel.Settings.AsmOutputMode == "Standalone", (ushort)ViewModel.Settings.AsmDefaultOriginAddress);
         _lastAsmResult = asmResult;
 
-        var byName = AsmSymbolIndex.Analyze(document.Text)
+        UpdateAsmGutterAddresses(asmResult);
+
+        // Reuses the parse Assemble() already did (see RunDocumentAnalysis) instead of
+        // re-parsing the same source a second time just to index it.
+        var byName = AsmSymbolIndex.Analyze(asmResult.ParsedLines)
             .GroupBy(o => o.Name, StringComparer.Ordinal);
 
         var seenNames = new HashSet<string>(StringComparer.Ordinal);
@@ -5448,6 +6368,34 @@ public partial class MainWindow : Window
 
         RemoveStaleSymbols(constants, seenNames);
         RemoveStaleSymbols(labels, seenNames);
+    }
+
+    // Shows real memory addresses in the gutter instead of sequential line numbers for a regular
+    // (non-disassembly) assembly tab, but only once its source has an explicit ".org" - without
+    // one, "address" would just mean wherever the auto-generated BASIC loader stub (or the
+    // standalone-output default origin) happens to land the code, an implementation detail rather
+    // than something the user chose. Falls back to plain line numbers while the source doesn't
+    // assemble cleanly, since there's no valid address data then. A tab that already carries its
+    // own DisassemblyLineAddresses snapshot - a live IsDisassemblyMode tab, or a freshly opened
+    // "Disassemble file" tab - always wins instead; this leaves those tabs alone entirely, letting
+    // this recomputed-by-reassembly view take back over automatically once that snapshot is
+    // cleared (see Editor_TextChanged, for a "Disassemble file" tab that's since been edited).
+    private void UpdateAsmGutterAddresses(AssemblyResult asmResult)
+    {
+        var tab = ViewModel.ActiveTab;
+        if (tab == null || tab.IsDisassemblyMode || tab.DisassemblyLineAddresses != null) return;
+
+        Dictionary<int, ushort>? lineAddresses = null;
+        if (asmResult.Success && asmResult.HasExplicitOrigin)
+        {
+            lineAddresses = new Dictionary<int, ushort>();
+            foreach (var entry in asmResult.ListingEntries)
+                lineAddresses[entry.LineNumber] = entry.Address;
+        }
+
+        _asmLineNumberMargin.LineAddresses = lineAddresses;
+        _asmLineNumberMargin.InvalidateMeasure();
+        _asmLineNumberMargin.InvalidateVisual();
     }
 
     private static void RemoveStaleSymbols(ObservableCollection<AsmSymbolInfo> symbols, HashSet<string> seenNames)
@@ -5974,6 +6922,17 @@ public partial class MainWindow : Window
 
     private void Editor_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // Assembly auto-indent: handled up front and returns, rather than falling through to the
+        // BASIC-specific line-number logic below (_leadingLineNumberPattern wouldn't match an
+        // assembly line anyway, but this keeps the two languages' Enter handling clearly separate).
+        bool isEnterForAsmIndent = (e.Key == Key.Enter || e.Key == Key.Return) && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        if (isEnterForAsmIndent && ViewModel.ActiveTab?.Language == EditorLanguage.Asm && ViewModel.Settings.AsmAutoIndent)
+        {
+            e.Handled = true;
+            InsertAsmNewlineWithIndent();
+            return;
+        }
+
         // Ctrl+K chord prefix — next key determines the action
         if (e.Key == Key.K && Keyboard.Modifiers == ModifierKeys.Control)
         {
@@ -6128,6 +7087,84 @@ public partial class MainWindow : Window
         }
     }
 
+    // Handles Enter in an assembly tab when Auto-indent is on. Normalizes the line being left in
+    // two independent ways before moving on:
+    //  1. If it's a bare mnemonic line typed without the configured indent and/or in the wrong
+    //     case (e.g. "lda #25" at column 1), re-indents it to AsmMnemonicIndentColumn and
+    //     upper-cases just the mnemonic token, leaving the operand/comment exactly as typed.
+    //  2. If it has an inline ";" comment with real code before it (a whole-line comment is left
+    //     alone - shifting it to the comment column would just waste space), the comment is
+    //     realigned to AsmCommentAlignColumn.
+    // Then indents the new line to the mnemonic column too, if the (possibly just-normalized)
+    // current line was a mnemonic line. A label-only line, directive, comment, or blank line
+    // triggers neither the indent nor the next-line auto-indent - only comment alignment applies
+    // to those, when they have a trailing comment.
+    private void InsertAsmNewlineWithIndent()
+    {
+        var document = Editor.Document;
+        var line = document.GetLineByOffset(Editor.CaretOffset);
+        string lineText = document.GetText(line);
+        int caretInLine = Editor.CaretOffset - line.Offset;
+        bool caretAtEnd = caretInLine == lineText.Length;
+
+        string workingLine = lineText;
+
+        string trimmedStart = workingLine.TrimStart();
+        int oldIndentLength = workingLine.Length - trimmedStart.Length;
+        string trimmed = trimmedStart.TrimEnd();
+
+        bool isMnemonicLine = AsmCodeFormatter.TryParseAsmMnemonicLine(trimmed, out string mnemonic, out string rest);
+        string indent = isMnemonicLine
+            ? new string(' ', Math.Max(0, ViewModel.Settings.AsmMnemonicIndentColumn - 1))
+            : "";
+
+        if (isMnemonicLine)
+        {
+            string normalized = indent + mnemonic.ToUpperInvariant() + rest;
+            if (normalized != workingLine)
+            {
+                caretInLine = Math.Clamp(caretInLine + (indent.Length - oldIndentLength), 0, normalized.Length);
+                workingLine = normalized;
+            }
+        }
+
+        // Same convention as ".byte"/string literals aren't excluded here either - matches
+        // AsmCommentColorizer's own (deliberately simple) first-";" rule, so a comment realigned
+        // here is always exactly what's shown colored as a comment.
+        int semicolonIndex = workingLine.IndexOf(';');
+        if (semicolonIndex > 0)
+        {
+            string codePart = workingLine[..semicolonIndex];
+            if (!string.IsNullOrWhiteSpace(codePart))
+            {
+                string commentPart = workingLine[semicolonIndex..];
+                string trimmedCode = codePart.TrimEnd();
+                int targetLength = Math.Max(0, ViewModel.Settings.AsmCommentAlignColumn - 1);
+                string alignedCode = trimmedCode.Length < targetLength ? trimmedCode.PadRight(targetLength) : trimmedCode + "  ";
+                string realigned = alignedCode + commentPart;
+
+                if (realigned != workingLine)
+                {
+                    if (caretAtEnd)
+                        caretInLine = realigned.Length;
+                    else if (caretInLine >= semicolonIndex)
+                        caretInLine = Math.Clamp(alignedCode.Length + (caretInLine - semicolonIndex), 0, realigned.Length);
+                    else
+                        caretInLine = Math.Clamp(caretInLine, 0, realigned.Length);
+
+                    workingLine = realigned;
+                }
+            }
+        }
+
+        if (workingLine != lineText)
+            document.Replace(line.Offset, line.Length, workingLine);
+
+        int insertOffset = line.Offset + caretInLine;
+        document.Insert(insertOffset, Environment.NewLine + indent);
+        Editor.CaretOffset = insertOffset + Environment.NewLine.Length + indent.Length;
+    }
+
     private void Editor_PreviewTextInput(object sender, TextCompositionEventArgs e)
     {
         // C64 BASIC is upper case by default - force typed text to match. Assembly source case
@@ -6258,6 +7295,7 @@ public partial class MainWindow : Window
         Editor.Foreground = (Brush)FindResource("ThemeEditorFg");
         Editor.FontSize   = ViewModel.Settings.EditorFontSize;
         Editor.WordWrap   = ViewModel.Settings.WordWrap;
+        HexEditor.HexFontSize = ViewModel.Settings.EditorFontSize;
         _lineNumberColorizer.LineNumberBrush       = (Brush)FindResource("ThemeEditorLineNumberFg");
         _lineNumberColorizer.ActiveLineNumberBrush = (Brush)FindResource("ThemeEditorFg");
         _keywordColorizer.KeywordBrush          = (Brush)FindResource("ThemeEditorKeywordFg");
@@ -6288,8 +7326,21 @@ public partial class MainWindow : Window
         // the position's change handler reliably redraws the ruler in its hidden/shown state
         Editor.Options.ShowColumnRuler = true;
         Editor.TextArea.TextView.ColumnRulerPen = new Pen((Brush)FindResource("ThemeEditorGuideLineFg"), 1);
-        Editor.Options.ColumnRulerPosition = ViewModel.Settings.ShowColumnGuide ? Math.Max(1, ViewModel.Settings.ColumnGuideColumn) : -1;
+        UpdateColumnRulerPosition();
+    }
 
+    // The column guide's target column is per-language (BASIC and assembly have their own
+    // setting - see AppSettings.BasicColumnGuideColumn/AsmColumnGuideColumn), so unlike the rest
+    // of ApplyEditorAppearance's one-time-refresh values, this also needs to be re-applied
+    // whenever the active tab's language changes, not just on startup/theme change/Settings close.
+    private int ActiveColumnGuideColumn() =>
+        ViewModel.ActiveTab?.Language == EditorLanguage.Asm
+            ? ViewModel.Settings.AsmColumnGuideColumn
+            : ViewModel.Settings.BasicColumnGuideColumn;
+
+    private void UpdateColumnRulerPosition()
+    {
+        Editor.Options.ColumnRulerPosition = ViewModel.Settings.ShowColumnGuide ? Math.Max(1, ActiveColumnGuideColumn()) : -1;
         Editor.TextArea.TextView.Redraw();
     }
 
@@ -6322,7 +7373,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateScreenPositionStatus()
     {
-        int wrapColumn = Math.Max(1, ViewModel.Settings.ColumnGuideColumn);
+        int wrapColumn = Math.Max(1, ActiveColumnGuideColumn());
         int caretIndex = Editor.CaretOffset;
 
         int row = 1;

@@ -66,6 +66,16 @@ public class FileClassifierTests
     }
 
     [Fact]
+    public void Classify_PrgWithEmptyBytes_ReturnsPrg()
+    {
+        // A brand-new blank .prg (e.g. from "New File...") has no machine code to speak of -
+        // IsBasicProgram would call it "Ml" purely because it's too short to validate as a BASIC
+        // line chain, which is misleading.
+        var kind = FileClassifier.Classify("test.prg", isFolder: false, () => []);
+        Assert.Equal(C64UFileKind.Prg, kind);
+    }
+
+    [Fact]
     public void Classify_PrgWithThrowingCallback_DefaultsToPrg()
     {
         // e.g. a remote entry whose content hasn't been downloaded yet, or an unreadable local file.

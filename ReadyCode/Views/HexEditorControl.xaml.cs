@@ -48,6 +48,26 @@ public partial class HexEditorControl : UserControl
     #region Public Properties
 
     /// <summary>
+    /// Gets or sets the font size hex/ASCII text is drawn at - set to match
+    /// <c>Settings.EditorFontSize</c> so it stays in sync with the Assembler/Disassembler editor.
+    /// The header row and edit-overlay textbox are rescaled to match by the same factor as
+    /// <see cref="HexGridCanvas"/>'s own cells (see <see cref="HexGridCanvas.Scale"/>), so
+    /// everything stays aligned regardless of size. Named distinctly from the inherited
+    /// <see cref="Control.FontSize"/> (which this deliberately doesn't use - the grid's font
+    /// isn't a WPF-inherited text property) rather than hiding it.
+    /// </summary>
+    public double HexFontSize
+    {
+        get => HexGrid.FontSize;
+        set
+        {
+            if (HexGrid.FontSize == value) return;
+            HexGrid.FontSize = value;
+            RescaleHeaderAndEditBox();
+        }
+    }
+
+    /// <summary>
     /// Gets the byte offset of the most recently selected cell, for saving/restoring position
     /// when switching away from and back to this tab - the hex-mode analog of the text
     /// editor's caret offset.
@@ -129,6 +149,37 @@ public partial class HexEditorControl : UserControl
 
     #region Private Methods
 
+    // Rescales the header row and edit-overlay textbox to match HexGrid's own cell/column
+    // dimensions at its current FontSize - both were originally fixed sizes hand-tuned to line up
+    // with the grid at 13pt (see HexGridCanvas's own layout-property comments), so every value
+    // set here mirrors one of those, scaled by the exact same factor rather than recomputed
+    // independently, to guarantee they can't drift out of alignment with each other.
+    private void RescaleHeaderAndEditBox()
+    {
+        double scale = HexGrid.Scale;
+
+        HeaderPanel.Margin = new Thickness(6 * scale, 4 * scale, 6 * scale, 4 * scale);
+
+        OffsetHeaderText.Width = HexGrid.OffsetLabelWidth;
+        OffsetHeaderText.FontSize = 11 * scale;
+
+        HeaderDivider1.Margin = new Thickness(6 * scale, 2 * scale, 6 * scale, 2 * scale);
+        HeaderDivider2.Margin = new Thickness(6 * scale, 2 * scale, 6 * scale, 2 * scale);
+
+        CellsHeaderPanel.Margin = new Thickness(8 * scale, 0, 8 * scale, 0);
+        foreach (var cell in CellsHeaderPanel.Children.OfType<TextBlock>())
+        {
+            cell.Width = HexGrid.CellContentWidth;
+            cell.Margin = new Thickness(1 * scale, 0, 1 * scale, 0);
+            cell.FontSize = 11 * scale;
+        }
+
+        AsciiHeaderText.Margin = new Thickness(8 * scale, 0, 0, 0);
+        AsciiHeaderText.FontSize = 11 * scale;
+
+        EditBox.FontSize = HexGrid.FontSize;
+    }
+
     private void HexGrid_EditRequested(object? sender, int offset)
     {
         Rect bounds = HexGrid.GetCellBounds(offset);
@@ -142,6 +193,11 @@ public partial class HexEditorControl : UserControl
         EditPopup.PlacementTarget = RowsScrollViewer;
         EditPopup.HorizontalOffset = bounds.X;
         EditPopup.VerticalOffset = bounds.Y - RowsScrollViewer.VerticalOffset;
+
+        // Sized from the cell's own (font-size-scaled) bounds rather than a fixed size, so the
+        // overlay still exactly covers the cell it's editing at any font size.
+        EditBox.Width = bounds.Width;
+        EditBox.Height = bounds.Height - 2 * HexGrid.Scale;
 
         EditBox.Text = HexGrid.GetHexText(offset);
         EditPopup.IsOpen = true;

@@ -38,11 +38,11 @@ See [Minify and Prettify](minify-and-prettify.md) for the fuller renumbering opt
 
 ## Code folding
 
-Multi-line `REM` comment blocks and `FOR`/`NEXT` loops can be collapsed to reduce visual clutter in longer programs. Folding can be turned off entirely in **Preferences > Settings... > Text Editor > Code Analysis**.
+Multi-line `REM` comment blocks and `FOR`/`NEXT` loops can be collapsed to reduce visual clutter in longer programs. Folding can be turned off entirely in **Preferences > Settings... > BASIC > Code Analysis**.
 
 ## Diagnostics
 
-READYCode checks your program for common mistakes as you type and flags them with a squiggle underline, the same way a modern IDE flags a syntax error. It catches duplicate line numbers, `GOTO`/`GOSUB`/`THEN` targets that do not exist, unmatched `FOR`/`NEXT` pairs, and unterminated string literals. Hover over a squiggle to see the specific problem. This can be turned off in **Preferences > Settings... > Text Editor > Code Analysis** if you would rather not see it.
+READYCode checks your program for common mistakes as you type and flags them with a squiggle underline, the same way a modern IDE flags a syntax error. It catches duplicate line numbers, `GOTO`/`GOSUB`/`THEN` targets that do not exist, unmatched `FOR`/`NEXT` pairs, and unterminated string literals. Hover over a squiggle to see the specific problem. This can be turned off in **Preferences > Settings... > BASIC > Code Analysis** if you would rather not see it.
 
 ## The Variables panel
 
