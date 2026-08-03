@@ -39,6 +39,7 @@ public class SettingsViewModel : INotifyPropertyChanged
     private bool _minifyRenumberLines;
     private bool _enableLinting;
     private bool _enableCodeFolding;
+    private string _generatedDiskImageDirectory;
 
     #endregion
 
@@ -75,6 +76,7 @@ public class SettingsViewModel : INotifyPropertyChanged
         _minifyRenumberLines = settings.MinifyRenumberLines;
         _enableLinting = settings.EnableLinting;
         _enableCodeFolding = settings.EnableCodeFolding;
+        _generatedDiskImageDirectory = settings.GeneratedDiskImageDirectory;
     }
 
     #endregion
@@ -297,6 +299,16 @@ public class SettingsViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Gets or sets the project-relative or absolute folder where manifest-generated disk images are written.
+    /// Empty means write each image next to its manifest file.
+    /// </summary>
+    public string GeneratedDiskImageDirectory
+    {
+        get => _generatedDiskImageDirectory;
+        set { if (_generatedDiskImageDirectory == value) return; _generatedDiskImageDirectory = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
     /// Gets or sets whether code is automatically minified when transferred to the C64 Ultimate.
     /// </summary>
     public bool MinifyOnTransfer
@@ -420,6 +432,7 @@ public class SettingsViewModel : INotifyPropertyChanged
         settings.MinifyRenumberLines = MinifyRenumberLines;
         settings.EnableLinting = EnableLinting;
         settings.EnableCodeFolding = EnableCodeFolding;
+        settings.GeneratedDiskImageDirectory = GeneratedDiskImageDirectory.Trim();
     }
 
     #endregion

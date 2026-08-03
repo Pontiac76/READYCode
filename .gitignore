@@ -103,12 +103,7 @@ Packages/
 # but keep track of directories ending in .cache
 !*.[Cc]ache/
 
-# AI assistant settings/config (Claude Code, Cursor, Windsurf, GitHub Copilot, Aider, etc.)
-.claude/settings.json
-.claude/settings.local.json
-.cursor/
-.windsurf/
-.aider*
-.continue/
-.codeium/
-CLAUDE.md
+# READYCode local/generated project output
+Projects/
+generated/
+**/generated/

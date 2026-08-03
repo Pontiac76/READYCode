@@ -215,6 +215,12 @@ public class AppSettings
     public string LastFolderPath { get; set; } = "";
 
     /// <summary>
+    /// Project-relative or absolute folder where manifest-generated disk images are written.
+    /// Empty means write each image next to its manifest file.
+    /// </summary>
+    public string GeneratedDiskImageDirectory { get; set; } = "generated";
+
+    /// <summary>
     /// URL of the READYCode GitHub repository, opened by Help &gt; Visit READYCode on GitHub.
     /// </summary>
     public string GitHubUrl { get; set; } = "https://github.com/jbramwell/READYCode";

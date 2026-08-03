@@ -14,4 +14,7 @@ public enum EditorLanguage
 
     /// <summary>Standard 6502 assembly source.</summary>
     Asm,
+
+    /// <summary>Plain text with no BASIC tokenization or language-specific editor behavior.</summary>
+    PlainText,
 }

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Moonspace Labs, LLC
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -103,9 +104,10 @@ public partial class SettingsWindow : Window
         {
             "general"       => TreeGeneral,
             "formatting"    => TreeFormatting,
-            "code-analysis" => TreeCodeAnalysis,
-            "code-minify"   => TreeMinify,
-            "c64u"          => TreeC64U,
+            "code-analysis"    => TreeCodeAnalysis,
+            "code-minify"      => TreeMinify,
+            "code-disk-images" => TreeDiskImages,
+            "c64u"             => TreeC64U,
             "vice"          => TreeVice,
             _               => TreeAppGeneral,
         };
@@ -120,10 +122,23 @@ public partial class SettingsWindow : Window
         PanelAppGeneral.Visibility   = tag == "app-general"   ? Visibility.Visible : Visibility.Collapsed;
         PanelGeneral.Visibility      = tag == "general"       ? Visibility.Visible : Visibility.Collapsed;
         PanelFormatting.Visibility   = tag == "formatting"    ? Visibility.Visible : Visibility.Collapsed;
-        PanelCodeAnalysis.Visibility = tag == "code-analysis" ? Visibility.Visible : Visibility.Collapsed;
-        PanelMinify.Visibility       = tag == "code-minify"   ? Visibility.Visible : Visibility.Collapsed;
-        PanelC64U.Visibility         = tag == "c64u"          ? Visibility.Visible : Visibility.Collapsed;
+        PanelCodeAnalysis.Visibility = tag == "code-analysis"    ? Visibility.Visible : Visibility.Collapsed;
+        PanelMinify.Visibility       = tag == "code-minify"      ? Visibility.Visible : Visibility.Collapsed;
+        PanelDiskImages.Visibility   = tag == "code-disk-images" ? Visibility.Visible : Visibility.Collapsed;
+        PanelC64U.Visibility         = tag == "c64u"             ? Visibility.Visible : Visibility.Collapsed;
         PanelVice.Visibility         = tag == "vice"          ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ── Disk Images ──────────────────────────────────────────────────────────
+
+    private void GeneratedDiskImageDirectoryBrowse_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "Select Generated Disk Image Directory" };
+        if (Path.IsPathRooted(ViewModel.GeneratedDiskImageDirectory) && Directory.Exists(ViewModel.GeneratedDiskImageDirectory))
+            dialog.InitialDirectory = ViewModel.GeneratedDiskImageDirectory;
+
+        if (dialog.ShowDialog(this) == true)
+            ViewModel.GeneratedDiskImageDirectory = dialog.FolderName;
     }
 
     // ── VICE Emulator ────────────────────────────────────────────────────────

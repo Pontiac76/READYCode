@@ -22,8 +22,11 @@ public class ViceClient
     private const byte _advanceInstructionsCommand = 0x71;
     private const byte _exitCommand = 0xaa;
     private const byte _quitCommand = 0xbb;
+    private const byte _resourceGetCommand = 0x51;
+    private const byte _resourceSetCommand = 0x52;
     private const byte _resetCommand = 0xcc;
     private const byte _infoCommand = 0x85;
+    private const int _maxAutostartPathBytes = 255;
     private const uint _requestId = 1;
     private const int _swRestore = 9;
 
@@ -33,6 +36,7 @@ public class ViceClient
     // alive here instead of being closed at the end of the call like every other command.
     private static TcpClient? _pausedClient;
     private static NetworkStream? _pausedStream;
+    private static string? _lastDiskImagePathSentToVice;
 
     private readonly string _monitorHost;
     private readonly int _monitorPort;
@@ -87,6 +91,70 @@ public class ViceClient
     {
         string prgFile = WritePrgToTempFile(prgData, programName);
         await SendAutostartAsync(emulatorPath, prgFile, runAfterLoading: true, bringToForeground);
+    }
+
+    /// <summary>
+    /// Mounts a disk image in VICE without intentionally loading or running a program.
+    /// </summary>
+    /// <param name="emulatorPath">Full path to the VICE emulator executable (e.g. x64sc.exe).</param>
+    /// <param name="diskImagePath">Full path to the disk image to mount.</param>
+    /// <param name="bringToForeground">Whether to bring the VICE window to the foreground afterward.</param>
+    public async Task MountDiskImageAsync(string emulatorPath, string diskImagePath, bool bringToForeground)
+    {
+        await EnsureViceDriveTypeAsync(emulatorPath, diskImagePath);
+        _lastDiskImagePathSentToVice = Path.GetFullPath(diskImagePath);
+        await SendOneShotCommandAsync(BuildRequest(_resetCommand, new byte[] { 0x01 }));
+
+        if (bringToForeground)
+            BringViceToForeground(emulatorPath);
+    }
+
+    /// <summary>
+    /// Mounts/autoloads a disk image in VICE without running the loaded program.
+    /// </summary>
+    /// <param name="emulatorPath">Full path to the VICE emulator executable (e.g. x64sc.exe).</param>
+    /// <param name="diskImagePath">Full path to the disk image to mount/autoload.</param>
+    /// <param name="bringToForeground">Whether to bring the VICE window to the foreground afterward.</param>
+    public async Task LoadDiskImageAsync(string emulatorPath, string diskImagePath, bool bringToForeground)
+        => await SendDiskImageAutostartAsync(emulatorPath, diskImagePath, runAfterLoading: false, bringToForeground);
+
+    /// <summary>
+    /// Mounts/autostarts a disk image in VICE and runs the first program VICE selects from it.
+    /// </summary>
+    /// <param name="emulatorPath">Full path to the VICE emulator executable (e.g. x64sc.exe).</param>
+    /// <param name="diskImagePath">Full path to the disk image to mount/autostart.</param>
+    /// <param name="bringToForeground">Whether to bring the VICE window to the foreground afterward.</param>
+    public async Task RunDiskImageAsync(string emulatorPath, string diskImagePath, bool bringToForeground)
+        => await SendDiskImageAutostartAsync(emulatorPath, diskImagePath, runAfterLoading: true, bringToForeground);
+
+    /// <summary>
+    /// If VICE is running with drive 8 configured for the given disk image's drive type,
+    /// disables drive 8 so the mounted image file can be rewritten on disk.
+    /// </summary>
+    /// <param name="diskImagePath">The disk image path whose drive type should be released.</param>
+    /// <returns>The previous drive 8 type if drive 8 was disabled; otherwise null.</returns>
+    public async Task<int?> ReleaseDrive8IfMatchesAsync(string diskImagePath)
+    {
+        if (!await IsMonitorListeningAsync())
+            return null;
+
+        int desiredDriveType = GetDriveType(diskImagePath);
+        int currentDriveType = await GetIntegerResourceAsync("Drive8Type");
+        if (currentDriveType != desiredDriveType)
+            return null;
+
+        await SetIntegerResourceAsync("Drive8Type", 0);
+        return currentDriveType;
+    }
+
+    /// <summary>
+    /// Restores drive 8 to a previously configured VICE drive type.
+    /// </summary>
+    /// <param name="driveType">The VICE drive type value to restore.</param>
+    public async Task RestoreDrive8TypeAsync(int driveType)
+    {
+        if (await IsMonitorListeningAsync())
+            await SetIntegerResourceAsync("Drive8Type", driveType);
     }
 
     /// <summary>
@@ -200,13 +268,28 @@ public class ViceClient
 
     #region Private Methods
 
+    // Explicit "Load/Run Disk in VICE" path only: ensures drive 8 matches the disk image type,
+    // hard-resets the emulated C64, then asks VICE to autoload/autostart the image. Ordinary
+    // save/rebuild flows must not call this, because they should not surprise-reset or autoload
+    // the user's VICE session.
+    private async Task SendDiskImageAutostartAsync(string emulatorPath, string diskImagePath, bool runAfterLoading, bool bringToForeground)
+    {
+        await EnsureViceDriveTypeForAutostartAsync(emulatorPath, diskImagePath);
+        _lastDiskImagePathSentToVice = Path.GetFullPath(diskImagePath);
+        await SendOneShotCommandAsync(BuildRequest(_resetCommand, new byte[] { 0x01 }));
+        await SendAutostartAsync(emulatorPath, diskImagePath, runAfterLoading, bringToForeground);
+    }
+
     // Sends the binary monitor's "Autostart/Autoload" command (0xdd) to a running VICE
     // instance, starting one first if the monitor isn't already listening.
-    private async Task SendAutostartAsync(string emulatorPath, string prgFilePath, bool runAfterLoading, bool bringToForeground)
+    private async Task SendAutostartAsync(string emulatorPath, string filePath, bool runAfterLoading, bool bringToForeground, IEnumerable<string>? startupArguments = null)
     {
-        await EnsureViceRunningAsync(emulatorPath);
+        await EnsureViceRunningAsync(emulatorPath, startupArguments);
 
-        byte[] fileNameBytes = System.Text.Encoding.ASCII.GetBytes(prgFilePath);
+        byte[] fileNameBytes = System.Text.Encoding.ASCII.GetBytes(filePath);
+        if (fileNameBytes.Length > _maxAutostartPathBytes)
+            throw new InvalidOperationException($"VICE autostart path is too long ({fileNameBytes.Length} bytes; maximum is {_maxAutostartPathBytes}).");
+
         byte[] body = new byte[4 + fileNameBytes.Length];
         body[0] = runAfterLoading ? (byte)1 : (byte)0; // RL: run after loading?
         // bytes 1-2: FI, file index within the image - always 0 for a standalone .prg
@@ -259,6 +342,50 @@ public class ViceClient
             throw new InvalidOperationException($"VICE rejected the request (binary monitor error code {errorCode}).");
     }
 
+    private async Task EnsureViceDriveTypeAsync(string emulatorPath, string diskImagePath)
+    {
+        await StartOrRestartViceWithDiskAsync(emulatorPath, diskImagePath, restartIfDriveTypeDiffers: true, allowAlreadyMatchingDrive: IsLastDiskImageSentToVice(diskImagePath));
+    }
+
+    private async Task EnsureViceDriveTypeForAutostartAsync(string emulatorPath, string diskImagePath)
+    {
+        // Load/Run passes the requested disk image path to VICE's autostart command, so if VICE
+        // is already running with the correct drive type we can avoid a full restart. Plain Mount
+        // has no separate attach-only binary-monitor command here, so it still restarts to ensure
+        // the selected image is the one mounted.
+        await StartOrRestartViceWithDiskAsync(emulatorPath, diskImagePath, restartIfDriveTypeDiffers: true, allowAlreadyMatchingDrive: true);
+    }
+
+    private async Task StartOrRestartViceWithDiskAsync(
+        string emulatorPath,
+        string diskImagePath,
+        bool restartIfDriveTypeDiffers,
+        bool allowAlreadyMatchingDrive = false)
+    {
+        if (!File.Exists(diskImagePath))
+            throw new InvalidOperationException($"The disk image was not found at '{diskImagePath}'.");
+
+        int desiredDriveType = GetDriveType(diskImagePath);
+        if (await IsMonitorListeningAsync())
+        {
+            int currentDriveType = await GetIntegerResourceAsync("Drive8Type");
+            if (currentDriveType == desiredDriveType && allowAlreadyMatchingDrive)
+                return;
+
+            if (currentDriveType != desiredDriveType && !restartIfDriveTypeDiffers)
+                throw new InvalidOperationException("VICE is already running with a different drive type.");
+
+            await SendOneShotCommandAsync(BuildRequest(_quitCommand, Array.Empty<byte>()));
+            ClearPausedConnection();
+
+            for (int i = 0; i < 20 && await IsMonitorListeningAsync(); i++)
+                await Task.Delay(150);
+        }
+
+        await EnsureViceRunningAsync(emulatorPath, GetDriveStartupArguments(diskImagePath));
+        _lastDiskImagePathSentToVice = Path.GetFullPath(diskImagePath);
+    }
+
     // Throws if VICE's binary monitor isn't already reachable. Used by admin commands that
     // operate on an existing instance and should not launch a new one.
     private async Task RequireViceRunningAsync()
@@ -277,7 +404,7 @@ public class ViceClient
 
     // Reuses an already-running VICE instance if its binary monitor is reachable; otherwise
     // launches a new one and waits for the monitor to come online.
-    private async Task EnsureViceRunningAsync(string emulatorPath)
+    private async Task EnsureViceRunningAsync(string emulatorPath, IEnumerable<string>? startupArguments = null)
     {
         if (await IsMonitorListeningAsync())
             return;
@@ -288,10 +415,19 @@ public class ViceClient
         if (!File.Exists(emulatorPath))
             throw new InvalidOperationException($"The VICE emulator executable was not found at '{emulatorPath}'.");
 
-        Process.Start(new ProcessStartInfo(
-            emulatorPath,
-            $"-binarymonitor -binarymonitoraddress {_monitorHost}:{_monitorPort}")
-        { UseShellExecute = true });
+        var startInfo = new ProcessStartInfo(emulatorPath) { UseShellExecute = true };
+        // Use ArgumentList instead of one hard-coded argument string so paths with spaces are
+        // quoted/escaped by ProcessStartInfo rather than by our own string formatting.
+        startInfo.ArgumentList.Add("-binarymonitor");
+        startInfo.ArgumentList.Add("-binarymonitoraddress");
+        startInfo.ArgumentList.Add($"{_monitorHost}:{_monitorPort}");
+        if (startupArguments != null)
+        {
+            foreach (string argument in startupArguments)
+                startInfo.ArgumentList.Add(argument);
+        }
+
+        Process.Start(startInfo);
 
         for (int i = 0; i < 30; i++)
         {
@@ -302,6 +438,68 @@ public class ViceClient
         }
 
         throw new InvalidOperationException("Timed out waiting for VICE to start.");
+    }
+
+    private static bool IsLastDiskImageSentToVice(string diskImagePath) =>
+        _lastDiskImagePathSentToVice != null &&
+        string.Equals(_lastDiskImagePathSentToVice, Path.GetFullPath(diskImagePath), StringComparison.OrdinalIgnoreCase);
+
+    private static int GetDriveType(string diskImagePath) => Path.GetExtension(diskImagePath).ToLowerInvariant() switch
+    {
+        ".d71" => 1571,
+        ".d81" => 1581,
+        _ => 1541,
+    };
+
+    private static IEnumerable<string> GetDriveStartupArguments(string diskImagePath) =>
+        ["-drive8type", GetDriveType(diskImagePath).ToString(), "-8", diskImagePath];
+
+    private async Task<int> GetIntegerResourceAsync(string name)
+    {
+        byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(name);
+        if (nameBytes.Length > 255)
+            throw new InvalidOperationException($"VICE resource name is too long: '{name}'.");
+
+        byte[] body = new byte[1 + nameBytes.Length];
+        body[0] = (byte)nameBytes.Length;
+        nameBytes.CopyTo(body, 1);
+
+        using var client = new TcpClient();
+        await client.ConnectAsync(_monitorHost, _monitorPort);
+        using var stream = client.GetStream();
+
+        await stream.WriteAsync(BuildRequest(_resourceGetCommand, body));
+        var (errorCode, responseBody) = await ReadResponseAsync(stream);
+        if (errorCode != 0)
+            throw new InvalidOperationException($"VICE resource '{name}' could not be read (binary monitor error code {errorCode}).");
+        if (responseBody.Length < 2 || responseBody[0] != 0x01)
+            throw new InvalidOperationException($"VICE resource '{name}' is not an integer resource.");
+
+        int valueLength = responseBody[1];
+        if (responseBody.Length < 2 + valueLength || valueLength is < 1 or > 4)
+            throw new InvalidOperationException($"VICE resource '{name}' returned an invalid integer value.");
+
+        int value = 0;
+        for (int i = 0; i < valueLength; i++)
+            value |= responseBody[2 + i] << (i * 8);
+        return value;
+    }
+
+    private async Task SetIntegerResourceAsync(string name, int value)
+    {
+        byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(name);
+        if (nameBytes.Length > 255)
+            throw new InvalidOperationException($"VICE resource name is too long: '{name}'.");
+
+        byte[] valueBytes = BitConverter.GetBytes(value);
+        byte[] body = new byte[3 + nameBytes.Length + valueBytes.Length];
+        body[0] = 0x01; // integer
+        body[1] = (byte)nameBytes.Length;
+        nameBytes.CopyTo(body, 2);
+        body[2 + nameBytes.Length] = (byte)valueBytes.Length;
+        valueBytes.CopyTo(body, 3 + nameBytes.Length);
+
+        await SendOneShotCommandAsync(BuildRequest(_resourceSetCommand, body));
     }
 
     private async Task<bool> IsMonitorListeningAsync()

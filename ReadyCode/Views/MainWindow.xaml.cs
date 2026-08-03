@@ -29,6 +29,7 @@ using ReadyCode.Prettify;
 using ReadyCode.Search;
 using ReadyCode.Sid;
 using ReadyCode.Tokenizer;
+using ReadyCode.Vice;
 using ReadyCode.ViewModels;
 
 namespace ReadyCode.Views;
@@ -859,24 +860,280 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void LocalDiskImageContextViceMount_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await LoadLocalDiskImageInViceAsync(item, ViceDiskAction.Mount);
+    }
+
+    private async void LocalDiskImageContextUltimateMountA_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "a", UltimateDiskAction.Mount);
+    }
+
+    private async void LocalDiskImageContextUltimateMountB_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "b", UltimateDiskAction.Mount);
+    }
+
+    private async void LocalDiskImageContextUltimateMountResetA_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "a", UltimateDiskAction.MountAndReset);
+    }
+
+    private async void LocalDiskImageContextUltimateMountResetB_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "b", UltimateDiskAction.MountAndReset);
+    }
+
+    private async void LocalDiskImageContextUltimateLoadA_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "a", UltimateDiskAction.Load);
+    }
+
+    private async void LocalDiskImageContextUltimateLoadB_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "b", UltimateDiskAction.Load);
+    }
+
+    private async void LocalDiskImageContextUltimateRunA_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "a", UltimateDiskAction.Run);
+    }
+
+    private async void LocalDiskImageContextUltimateRunB_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await UploadAndMountLocalDiskImageOnUltimateAsync(item, "b", UltimateDiskAction.Run);
+    }
+
+    private async void LocalDiskImageContextViceLoad_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await LoadLocalDiskImageInViceAsync(item, ViceDiskAction.Load);
+    }
+
+    private async void LocalDiskImageContextViceRun_Click(object sender, RoutedEventArgs e)
+    {
+        var item = GetContextItem(sender);
+        if (item != null) await LoadLocalDiskImageInViceAsync(item, ViceDiskAction.Run);
+    }
+
+    private async Task LoadLocalDiskImageInViceAsync(FileTreeItem item, ViceDiskAction action)
+    {
+        try
+        {
+            var client = new ViceClient(ViewModel.Settings.ViceMonitorHost, ViewModel.Settings.ViceMonitorPort);
+            switch (action)
+            {
+                case ViceDiskAction.Mount:
+                    await client.MountDiskImageAsync(ViewModel.Settings.ViceEmulatorPath, item.FullPath, ViewModel.Settings.ViceBringToForeground);
+                    break;
+                case ViceDiskAction.Load:
+                    await client.LoadDiskImageAsync(ViewModel.Settings.ViceEmulatorPath, item.FullPath, ViewModel.Settings.ViceBringToForeground);
+                    break;
+                default:
+                    await client.RunDiskImageAsync(ViewModel.Settings.ViceEmulatorPath, item.FullPath, ViewModel.Settings.ViceBringToForeground);
+                    break;
+            }
+
+            ViewModel.MarkDiskImageLoadedInVice(item.FullPath);
+            ViewModel.SetStatus(action switch
+            {
+                ViceDiskAction.Mount => $"Disk image mounted in VICE: {item.Name}",
+                ViceDiskAction.Load => $"Disk image loaded in VICE: {item.Name}",
+                _ => $"Disk image run in VICE: {item.Name}",
+            });
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"VICE disk image action failed: {ex.Message}", StatusType.Error);
+        }
+    }
+
+    private enum ViceDiskAction { Mount, Load, Run }
+
+    private async Task UploadAndMountLocalDiskImageOnUltimateAsync(FileTreeItem item, string driveId, UltimateDiskAction action)
+    {
+        try
+        {
+            string remotePath = $"/Temp/readycode-drive-{driveId}-{Path.GetFileName(item.FullPath)}";
+            byte[] diskBytes = await File.ReadAllBytesAsync(item.FullPath);
+
+            if (ViewModel.C64UFtp != null)
+            {
+                await ViewModel.C64UFtp.UploadBytesAsync(remotePath, diskBytes);
+            }
+            else
+            {
+                // Main-menu C64U Load/Run only needs the REST API, but mounting a local disk
+                // image requires first copying it onto the Ultimate's storage. If the Explorer
+                // FTP session is not open, make a short-lived FTP connection just for this upload.
+                using var ftp = new C64UFtpClient();
+                await ftp.ConnectAsync(ViewModel.C64UFtpHost);
+                await ftp.UploadBytesAsync(remotePath, diskBytes);
+            }
+
+            // UploadBytesAsync is awaited above, so the file transfer is complete before the REST
+            // mount call is sent to the Ultimate.
+            await ViewModel.MountC64UDriveAsync(driveId, remotePath);
+
+            if (action == UltimateDiskAction.Mount)
+            {
+                ViewModel.SetStatus($"Uploaded and mounted \"{item.Name}\" to Ultimate Drive {driveId.ToUpperInvariant()}.");
+            }
+            else
+            {
+                var client = new C64UltimateClient();
+                int resetSettleDelayMs = 3000;
+                int c128BootDelayMs = 3000;
+                int loadToRunDelayMs = 1000;
+
+                await client.MachineActionAsync(ViewModel.Settings.C64UUrl, "reset");
+                await Task.Delay(resetSettleDelayMs);
+
+                if (await IsC128NativeModeAsync(client))
+                {
+                    // A C128 checks drive 8 for boot data after reset. Give that process time to
+                    // finish before stuffing GO64 into the native-mode keyboard buffer.
+                    await Task.Delay(c128BootDelayMs);
+                    await StuffUltimateKeyboardAsync(client, 0x034A, 0x00D0, "GO64\r");
+                    await Task.Delay(500);
+                    await StuffUltimateKeyboardAsync(client, 0x034A, 0x00D0, "Y\r");
+                    await Task.Delay(resetSettleDelayMs);
+                }
+
+                if (action == UltimateDiskAction.MountAndReset)
+                {
+                    ViewModel.SetStatus($"Uploaded and mounted \"{item.Name}\" to Ultimate Drive {driveId.ToUpperInvariant()}, reset, and ensured C64 mode.");
+                    return;
+                }
+
+                int deviceNumber = await GetUltimateDriveDeviceNumberAsync(client, driveId);
+                await StuffC64UKeyboardAsync(client, $"Lo\"*\",{deviceNumber},1\r");
+                if (action == UltimateDiskAction.Run)
+                {
+                    await Task.Delay(loadToRunDelayMs);
+                    await StuffC64UKeyboardAsync(client, "Ru\r");
+                }
+
+                ViewModel.SetStatus(action == UltimateDiskAction.Load
+                    ? $"Uploaded, mounted, and loaded \"{item.Name}\" from Ultimate Drive {driveId.ToUpperInvariant()}."
+                    : $"Uploaded, mounted, and ran \"{item.Name}\" from Ultimate Drive {driveId.ToUpperInvariant()}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            ViewModel.SetStatus($"Ultimate disk image action failed: {ex.Message}", StatusType.Error);
+            MessageBox.Show(ex.ToString(), "Ultimate Disk Image Action Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task<bool> IsC128NativeModeAsync(C64UltimateClient client)
+    {
+        // $D030 is the C128 VIC-IIe extra-key/test-bit register. Bit 1 reads clear on a C128;
+        // on a plain C64 this register is not a VIC-IIe register.
+        byte[] bytes = await client.ReadMemoryAsync(ViewModel.Settings.C64UUrl, 0xD030, 1);
+        return bytes.Length > 0 && (bytes[0] & 0x02) == 0;
+    }
+
+    private async Task<int> GetUltimateDriveDeviceNumberAsync(C64UltimateClient client, string driveId)
+    {
+        var drives = await client.GetDrivesAsync(ViewModel.Settings.C64UUrl);
+        int? reported = drives.FirstOrDefault(d => string.Equals(d.Id, driveId, StringComparison.OrdinalIgnoreCase))?.DeviceNumber;
+        if (reported.HasValue)
+            return reported.Value;
+
+        // Typical Ultimate defaults are Drive A = device 8 and Drive B = device 9.
+        return string.Equals(driveId, "b", StringComparison.OrdinalIgnoreCase) ? 9 : 8;
+    }
+
+    private async Task StuffC64UKeyboardAsync(C64UltimateClient client, string text)
+    {
+        // $0277-$0280 is the C64 keyboard buffer; $00C6 is the count of buffered keys. Use C64
+        // BASIC shift-abbreviations (Lo = LOAD, Ru = RUN) so each command fits in the buffer.
+        await StuffUltimateKeyboardAsync(client, 0x0277, 0x00C6, text);
+    }
+
+    private async Task StuffUltimateKeyboardAsync(C64UltimateClient client, ushort bufferAddress, ushort countAddress, string text)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(text);
+        if (bytes.Length > 10)
+            throw new InvalidOperationException("Ultimate keyboard buffer commands must be 10 characters or fewer.");
+
+        await client.WriteMemoryAsync(ViewModel.Settings.C64UUrl, bufferAddress, bytes);
+        await client.WriteMemoryAsync(ViewModel.Settings.C64UUrl, countAddress, [(byte)bytes.Length]);
+    }
+
+    private enum UltimateDiskAction { Mount, MountAndReset, Load, Run }
+
     // Reloads a disk image node's virtual children after its bytes were rewritten (add/delete/
     // rename/replace), so the tree reflects the change without a full explorer reload.
     private void RefreshDiskImageNode(string diskImagePath) => FindItemByPath(diskImagePath)?.RefreshChildren();
 
-    private void FileSave_Click(object sender, RoutedEventArgs e)
+    private async void FileSave_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.ActiveTab == null) return;
         if (ViewModel.ActiveTab.VirtualSourceId != null)
         {
-            _ = SaveVirtualTabAsync(ViewModel.ActiveTab);
+            // Await the virtual tab save so the file is fully written before
+            // the manifest build reads it (avoids reading stale/empty content).
+            await SaveVirtualTabAsync(ViewModel.ActiveTab);
+            await BuildAndRefreshAsync();
             return;
         }
         if (string.IsNullOrEmpty(ViewModel.ActiveTab.FilePath))
         {
             FileSaveAs_Click(sender, e);
+            await BuildAndRefreshAsync();
             return;
         }
-        SaveFile(ViewModel.ActiveTab.FilePath);
+
+        try
+        {
+            SaveFile(ViewModel.ActiveTab.FilePath);
+        }
+        catch
+        {
+            // SaveFile already shows its own MessageBox on error, but we still need
+            // to avoid the manifest build since the file may be in a partially-written state.
+            return;
+        }
+
+        await BuildAndRefreshAsync();
+
+        // Helper: build disk images from any manifests found in the project root,
+        // then refresh the left panel so newly created/updated disk images appear.
+        async Task BuildAndRefreshAsync()
+        {
+            string root = ViewModel.Project.RootPath;
+            if (string.IsNullOrEmpty(root)) return;
+
+            try
+            {
+                bool changed = await ViewModel.BuildDiskImagesFromManifestsAsync(root);
+                if (changed)
+                {
+                    ViewModel.RefreshRootItems();
+                    ViewModel.SetStatus(ViewModel.BuildStatusMessage ?? "Disk image(s) built from manifest.", StatusType.Info);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Error building disk images from manifest:\n{ex.Message}",
+                    "Build Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
     }
 
     // Writes a virtual tab's (a program opened from inside a mounted .d64/.d81) edits back into
@@ -989,7 +1246,10 @@ public partial class MainWindow : Window
             }
             else if (ViewModel.ActiveTab != null && !PrgConverter.ShouldTokenizeOnSave(ViewModel.ActiveTab.Language, filePath))
             {
-                File.WriteAllText(filePath, Editor.Text, Encoding.UTF8);
+                string text = IsManifestFile(filePath) ? Editor.Text.ToUpperInvariant() : Editor.Text;
+                File.WriteAllText(filePath, text, Encoding.UTF8);
+                if (text != Editor.Text)
+                    Editor.Text = text;
                 ViewModel.IsModified = false;
                 TrackRecentFile(filePath);
                 ViewModel.SetStatus("File saved.");
@@ -1309,7 +1569,7 @@ public partial class MainWindow : Window
             if (!Editor.TextArea.LeftMargins.Contains(_asmLineNumberMargin))
                 Editor.TextArea.LeftMargins.Insert(0, _asmLineNumberMargin);
         }
-        else
+        else if (language == EditorLanguage.Basic)
         {
             transformers.Add(_lineNumberColorizer);
             transformers.Add(_keywordColorizer);
@@ -1320,24 +1580,28 @@ public partial class MainWindow : Window
 
             Editor.TextArea.LeftMargins.Remove(_asmLineNumberMargin);
         }
+        else
+        {
+            Editor.TextArea.LeftMargins.Remove(_asmLineNumberMargin);
+        }
 
         transformers.Add(_findHighlightColorizer);
 
         Editor.FontFamily = language == EditorLanguage.Asm ? _asmEditorFont : _basicEditorFont;
 
         bool isAsm = language == EditorLanguage.Asm;
-        _petsciiGlyphGenerator.IsAsmMode = isAsm;
+        bool isBasic = language == EditorLanguage.Basic;
+        _petsciiGlyphGenerator.IsAsmMode = !isBasic;
         Editor.TextArea.TextView.Redraw();
-        VariablesPanel.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
-        SymbolsPanel.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
+        ApplyVariableExplorerVisibility();
 
         // The BASIC Keywords / ASM Mnemonics activity-bar buttons only make sense for their
         // matching language - hide whichever doesn't apply, closing its panel first if it was
         // the one currently open (setting IsChecked here doesn't raise Click, so the panel
         // must be closed explicitly rather than relying on AsmKeywordsToggle_Click etc).
-        BasicKeywordsToggle.Visibility = isAsm ? Visibility.Collapsed : Visibility.Visible;
+        BasicKeywordsToggle.Visibility = isBasic ? Visibility.Visible : Visibility.Collapsed;
         AsmKeywordsToggle.Visibility = isAsm ? Visibility.Visible : Visibility.Collapsed;
-        if (isAsm && BasicKeywordsToggle.IsChecked == true)
+        if (!isBasic && BasicKeywordsToggle.IsChecked == true)
         {
             BasicKeywordsToggle.IsChecked = false;
             CloseRightPanel(BasicKeywordsPanel);
@@ -3896,7 +4160,13 @@ public partial class MainWindow : Window
 
     private static FileTreeItem? GetContextItem(object sender)
     {
-        var contextMenu = (sender as MenuItem)?.Parent as ContextMenu;
+        // Menu items may be nested inside submenu MenuItems (e.g. VICE/Ultimate disk actions),
+        // so walk up through ItemsControl parents until we reach the owning ContextMenu.
+        ItemsControl? parent = (sender as MenuItem)?.Parent as ItemsControl;
+        while (parent is MenuItem menuItem)
+            parent = menuItem.Parent as ItemsControl;
+
+        var contextMenu = parent as ContextMenu;
         return (contextMenu?.PlacementTarget as TreeViewItem)?.DataContext as FileTreeItem;
     }
 
@@ -5862,11 +6132,13 @@ public partial class MainWindow : Window
     {
         // C64 BASIC is upper case by default - force typed text to match. Assembly source case
         // is significant (labels, comments) - leave it to AvalonEdit's normal input handling.
-        if (ViewModel.ActiveTab?.Language == EditorLanguage.Asm) return;
+        if (ViewModel.ActiveTab?.Language != EditorLanguage.Basic && !IsActiveManifestTab()) return;
 
         e.Handled = true;
 
-        string insertText = TryGetKeywordAbbreviationGlyph(e.Text) ?? e.Text.ToUpperInvariant();
+        string insertText = ViewModel.ActiveTab?.Language == EditorLanguage.Basic
+            ? TryGetKeywordAbbreviationGlyph(e.Text) ?? e.Text.ToUpperInvariant()
+            : e.Text.ToUpperInvariant();
         int start = Editor.SelectionStart;
         int length = Editor.SelectionLength;
 
@@ -5927,6 +6199,13 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private static bool IsManifestFile(string path) =>
+        path.EndsWith("._64", StringComparison.OrdinalIgnoreCase) ||
+        path.EndsWith("._81", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsActiveManifestTab() =>
+        ViewModel.ActiveTab?.FilePath != null && IsManifestFile(ViewModel.ActiveTab.FilePath);
+
     private void Editor_Pasting(object sender, DataObjectPastingEventArgs e)
     {
         if (!e.DataObject.GetDataPresent(DataFormats.Text))
@@ -5935,7 +6214,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (ViewModel.ActiveTab?.Language == EditorLanguage.Asm) return; // preserve pasted case for assembly
+        if (ViewModel.ActiveTab?.Language != EditorLanguage.Basic && !IsActiveManifestTab()) return; // preserve pasted case for assembly/plain text
 
         string text = (string)e.DataObject.GetData(DataFormats.Text);
         e.DataObject = new DataObject(text.ToUpperInvariant());
@@ -5952,9 +6231,11 @@ public partial class MainWindow : Window
     // effectively inaccessible after a restart.
     private void ApplyVariableExplorerVisibility()
     {
-        bool show = ViewModel.Settings.ShowVariableExplorer;
+        var language = ViewModel.ActiveTab?.Language ?? EditorLanguage.Basic;
+        bool show = ViewModel.Settings.ShowVariableExplorer && language != EditorLanguage.PlainText;
 
-        VariablesPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        VariablesPanel.Visibility = show && language == EditorLanguage.Basic ? Visibility.Visible : Visibility.Collapsed;
+        SymbolsPanel.Visibility = show && language == EditorLanguage.Asm ? Visibility.Visible : Visibility.Collapsed;
         ExplorerRowSplitter.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         // MinHeight still reserves space for a Collapsed row's content, leaving a blank gap -
         // must be cleared too, not just Height.
