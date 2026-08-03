@@ -80,11 +80,11 @@ public class AsmTokensTests
     // ── Directives ────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Directives_ContainsOrgByteTextWord()
+    public void Directives_ContainsExactlyTheSupportedSet()
     {
         var directiveNames = AsmTokens.Directives.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        Assert.Equal(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".org", ".byte", ".text", ".word" }, directiveNames);
+        Assert.Equal(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".org", "*", ".byte", ".text", ".word", ".label", ".encoding" }, directiveNames);
     }
 
     [Fact]

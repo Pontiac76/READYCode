@@ -158,13 +158,12 @@ public class PrgConverter
     }
 
     /// <summary>
-    /// Converts a .prg binary file back into its original BASIC source text.
+    /// Converts a .prg binary file back into its original BASIC source text. A buffer too short
+    /// to hold even one line (e.g. an empty, freshly created .prg, or just the 2-byte load-address
+    /// header) isn't an error - the loop below simply never runs, so it returns an empty listing.
     /// </summary>
     public string ConvertFromPrg(byte[] data)
     {
-        if (data.Length < 4)
-            throw new FormatException("File is too small to be a valid C64 program.");
-
         var lines = new List<string>();
 
         // Skip the 2-byte load address header
@@ -246,6 +245,102 @@ public class PrgConverter
             ushort expectedLink = (ushort)(_loadAddress + pos - 2);
             if (link != expectedLink) return false;
         }
+    }
+
+    /// <summary>
+    /// Detects a short BASIC "loader" stub at the very start of .prg data - one or more
+    /// well-formed tokenized BASIC lines, with machine code bytes following immediately after.
+    /// Real C64 BASIC never validates a line's link pointer beyond following it, and a SYS-and-jump
+    /// stub's machine code never gets reached by continuing to follow links (SYS transfers control
+    /// away for good), so a real-world stub commonly has no trailing 0x0000 "end of program"
+    /// marker at all - the raw code just starts right where the next line's link field would be.
+    /// Accordingly, this stops consuming lines the moment it hits either a literal 0x0000 marker
+    /// (consumed, since that's a real sentinel, not code) or anything that doesn't look like a
+    /// forward-moving link (left alone - those bytes are the actual machine code). It also doesn't
+    /// require a line's link to match the exact address arithmetic <see cref="ConvertToPrg"/>
+    /// itself would produce, for the same reason: real BASIC doesn't validate that either, so
+    /// third-party/hand-assembled stubs routinely have link values that don't match a from-scratch
+    /// recomputation. Used by "Disassemble file" so a machine-language .prg with a real loader stub
+    /// (e.g. "10 SYS 2064") disassembles starting at the code's actual origin instead of
+    /// misinterpreting the stub's own tokenized bytes as 6502 opcodes.
+    /// </summary>
+    /// <param name="data">The .prg data (including its 2-byte load-address header) to check.</param>
+    /// <param name="stubLines">The stub's decoded BASIC line text (e.g. "10 SYS 2064"), if found.</param>
+    /// <param name="codeOffset">
+    /// The byte offset from the start of <paramref name="data"/> (header included) where the stub
+    /// ends and the trailing machine code begins, if found.
+    /// </param>
+    /// <returns>True if a stub was found with at least one byte of machine code following it.</returns>
+    public bool TryDetectBasicStub(byte[] data, out IReadOnlyList<string> stubLines, out int codeOffset)
+    {
+        stubLines = Array.Empty<string>();
+        codeOffset = 0;
+
+        if (data.Length < 4 || data[0] != (_loadAddress & 0xFF) || data[1] != (_loadAddress >> 8))
+            return false;
+
+        var lines = new List<string>();
+        int pos = 2;
+        ushort previousAddress = _loadAddress;
+
+        while (true)
+        {
+            if (pos + 1 >= data.Length) break;
+
+            ushort link = (ushort)(data[pos] | (data[pos + 1] << 8));
+
+            if (link == 0x0000)
+            {
+                pos += 2; // a real end-of-program sentinel, not code - consume it too
+                break;
+            }
+
+            if (link <= previousAddress) break; // doesn't continue the chain - this is the code
+
+            int afterLink = pos + 2;
+            if (afterLink + 1 >= data.Length) break; // truncated - not a real line
+
+            ushort lineNumber = (ushort)(data[afterLink] | (data[afterLink + 1] << 8));
+            int tokenPos = afterLink + 2;
+            while (tokenPos < data.Length && data[tokenPos] != 0x00)
+                tokenPos++;
+
+            if (tokenPos >= data.Length) break; // missing line terminator - not a real line
+
+            lines.Add($"{lineNumber} {DetokenizeLine(data[(afterLink + 2)..tokenPos])}");
+            previousAddress = link;
+            pos = tokenPos + 1; // past this line's own terminator byte
+        }
+
+        if (lines.Count == 0 || pos >= data.Length) return false;
+
+        stubLines = lines;
+        codeOffset = pos;
+        return true;
+    }
+
+    /// <summary>
+    /// Determines whether a raw .prg needs a typed "SYS &lt;origin&gt;" command to actually start
+    /// after loading, rather than relying on an emulator/hardware's native autostart RUN. True
+    /// when the file has no runnable BASIC entry point at all - neither a complete tokenized BASIC
+    /// program (<see cref="IsBasicProgram"/>) nor a loader stub followed by machine code
+    /// (<see cref="TryDetectBasicStub"/>) - in which case autostart's RUN has nothing to execute,
+    /// and <paramref name="origin"/> is instead read directly from the file's own 2-byte
+    /// load-address header (SYS's target is always wherever that load address actually places the
+    /// code, whether the file arrived as a real .prg or was just produced by assembling source
+    /// with an explicit ".org").
+    /// </summary>
+    /// <param name="data">The .prg data (including its 2-byte load-address header) to check.</param>
+    /// <param name="origin">The address to SYS into, if a typed command is needed.</param>
+    /// <returns>True if the file needs a typed SYS command to run.</returns>
+    public bool NeedsSysToRun(byte[] data, out ushort origin)
+    {
+        origin = 0;
+        if (data.Length < 2) return false;
+        if (IsBasicProgram(data) || TryDetectBasicStub(data, out _, out _)) return false;
+
+        origin = (ushort)(data[0] | (data[1] << 8));
+        return true;
     }
 
     #endregion

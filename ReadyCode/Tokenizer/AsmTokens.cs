@@ -112,9 +112,12 @@ public static class AsmTokens
     public static readonly IReadOnlyDictionary<string, MnemonicInfo> Directives = new Dictionary<string, MnemonicInfo>(StringComparer.OrdinalIgnoreCase)
     {
         { ".org",  new(".org $|",  "Sets the assembly origin. Must be the first thing in the file; omits the BASIC loader stub and emits a raw load-address header instead.", "Directives") },
-        { ".byte", new(".byte |",  "Emits literal byte data: quoted strings (one byte per character, no PETSCII remapping) and/or numeric literals, comma-separated.", "Directives") },
+        { "*",     new("* = $|",   "Sets the assembly origin - an alternate spelling of \".org\" ported from other assemblers. Same rules apply.", "Directives") },
+        { ".byte", new(".byte |",  "Emits literal byte data: quoted strings (one byte per character per the active \".encoding\") and/or numeric literals, comma-separated.", "Directives") },
         { ".text", new(".text |",  "Alias of \".byte\" - identical grammar, used to signal that the data is text rather than raw bytes.", "Directives") },
         { ".word", new(".word |",  "Emits 16-bit little-endian data: numeric literals and/or label/constant references (with an optional +N/-N offset), comma-separated.", "Directives") },
+        { ".label",    new(".label | = ", "Declares a named constant - an alternate spelling of \"NAME = value\" ported from other assemblers. Same rules apply.", "Directives") },
+        { ".encoding", new(".encoding \"|\"", "Sets how \".byte\"/\".text\" string literals convert characters to bytes, from here to the next \".encoding\": ascii, petscii_upper, petscii_mixed, screencode_upper, screencode_mixed.", "Directives") },
     };
 
     #endregion

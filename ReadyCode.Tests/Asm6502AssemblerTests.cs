@@ -70,6 +70,49 @@ public class Asm6502AssemblerTests
         Assert.Equal(new byte[] { 0xB9, 0x00, 0x02 }, AssembleCode("LDA $0200,Y"));
     }
 
+    // A "$" literal written with more than 2 hex digits (e.g. "$00F0") explicitly requests an
+    // absolute operand even when the value would fit zero-page - the same convention
+    // Asm6502Disassembler's own output relies on, so a disassembly listing round-trips back to
+    // byte-identical machine code instead of silently narrowing to zero-page (which would shrink
+    // the instruction by a byte and desync every address after it).
+    [Fact]
+    public void Assemble_FourDigitHexLiteralBelow256_ForcesAbsoluteAddressing()
+    {
+        Assert.Equal(new byte[] { 0xAD, 0xF0, 0x00 }, AssembleCode("LDA $00F0"));
+    }
+
+    [Fact]
+    public void Assemble_FourDigitHexLiteralBelow256_ForcesAbsoluteIndexedXAddressing()
+    {
+        Assert.Equal(new byte[] { 0x9D, 0xF0, 0x00 }, AssembleCode("STA $00F0,X"));
+    }
+
+    [Fact]
+    public void Assemble_TwoDigitHexLiteral_StillAssemblesZeroPage()
+    {
+        // Unaffected by the wide-hex-literal rule above - a genuine 2-digit literal still prefers
+        // zero-page exactly as before.
+        Assert.Equal(new byte[] { 0xA5, 0xF0 }, AssembleCode("LDA $F0"));
+    }
+
+    [Fact]
+    public void Disassemble_ThenReassemble_AbsoluteModeLowAddressOperand_RoundTripsToIdenticalBytes()
+    {
+        // Reproduces the real-world failure this rule fixes: STA absolute,X targeting a low
+        // ($00F0) address, followed by a branch. Disassembling then reassembling must reproduce
+        // the exact original bytes - a 1-byte narrowing here would shift the branch's target
+        // address without shifting the branch instruction itself, corrupting its offset.
+        byte[] original = [0x9D, 0xF0, 0x00, 0xE8, 0xD0, 0xFB]; // STA $00F0,X; INX; BNE -5
+        var disassembly = new Asm6502Disassembler().Disassemble(original, 0x0801);
+
+        var result = new Asm6502Assembler().Assemble(disassembly.Source);
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => $"L{e.LineNumber}: {e.Message}")));
+
+        // An explicit ".org" (which Disassemble always emits) produces a raw 2-byte load-address
+        // header, not AssembleCode's usual 15-byte BASIC stub.
+        Assert.Equal(original, result.PrgBytes![2..]);
+    }
+
     [Fact]
     public void Assemble_IndirectXAddressing()
     {
@@ -92,6 +135,18 @@ public class Asm6502AssemblerTests
     public void Assemble_AccumulatorAddressing()
     {
         Assert.Equal(new byte[] { 0x0A }, AssembleCode("ASL A"));
+    }
+
+    // ASL/LSR/ROL/ROR have no Implied form - only some real-world sources (Merlin among them)
+    // write them with no operand at all to mean the accumulator, same as writing "A" explicitly.
+    [Theory]
+    [InlineData("ASL", 0x0A)]
+    [InlineData("LSR", 0x4A)]
+    [InlineData("ROL", 0x2A)]
+    [InlineData("ROR", 0x6A)]
+    public void Assemble_ShiftRotateMnemonicWithNoOperand_DefaultsToAccumulator(string mnemonic, byte expectedOpcode)
+    {
+        Assert.Equal(new byte[] { expectedOpcode }, AssembleCode(mnemonic));
     }
 
     [Fact]
@@ -280,12 +335,197 @@ public class Asm6502AssemblerTests
     }
 
     [Fact]
-    public void Assemble_NonNumericConstantValueFails()
+    public void Assemble_ConstantReferencingUndefinedSymbolFails()
     {
+        // "SOMETHING" is never defined anywhere - this is not "X = SOMETHING must be a numeric
+        // literal" (a symbol reference is valid constant-value syntax - see the ".label" tests
+        // below), it's specifically that the referenced symbol doesn't exist.
         var result = new Asm6502Assembler().Assemble("X = SOMETHING\nNOP");
 
         Assert.False(result.Success);
-        Assert.Contains(result.Errors, e => e.LineNumber == 1 && e.Message.Contains("numeric literal"));
+        Assert.Contains(result.Errors, e => e.LineNumber == 1 && e.Message.Contains("Undefined"));
+    }
+
+    // ── ".label" / "*" / symbol-referencing constants ───────────────────────────────
+    // KickAssembler-style syntax ported from real-world disassemblies (see astro.asm on GitHub -
+    // MyDeveloperThoughts/astroPANICdissassembly).
+
+    [Fact]
+    public void Assemble_LabelDirective_PlainLiteral_SameAsBareConstant()
+    {
+        byte[] code = AssembleCode(".label ptr = $fb\nLDA ptr");
+
+        Assert.Equal(new byte[] { 0xA5, 0xFB }, code);
+    }
+
+    [Fact]
+    public void Assemble_LabelDirective_CurrentAddress_ResolvesToThatPoint()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $0810\nNOP\n.label here = *\nLDA #<here");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.Equal(0x11, result.PrgBytes![^1]); // low byte of $0811 (NOP is 1 byte, so "here" = $0811)
+    }
+
+    [Fact]
+    public void Assemble_LabelDirective_SymbolPlusOffset_ResolvesRelativeToEarlierLabel()
+    {
+        // Mirrors astro.asm's ".label data = *" followed by ".label datsaucxlo = data+1".
+        var result = new Asm6502Assembler().Assemble(
+            ".org $0810\ndata:\n.byte $01,$02,$03\n.label second = data+1\nLDA second");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        // "data" is at $0810 (right after .org), so "second" = $0811.
+        Assert.Equal(new byte[] { 0xAD, 0x11, 0x08 }, result.PrgBytes![^3..]);
+    }
+
+    [Fact]
+    public void Assemble_LabelDirective_ReferencingAnotherLabelDirective_ChainsCorrectly()
+    {
+        var result = new Asm6502Assembler().Assemble(
+            ".org $0810\n.label a = *\n.byte $00\n.label b = a+1\nLDA b");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.Equal(new byte[] { 0xAD, 0x11, 0x08 }, result.PrgBytes![^3..]);
+    }
+
+    [Fact]
+    public void Assemble_LabelDirective_ForwardReferenceToLaterLabel_Fails()
+    {
+        // Order-dependent by design: a "*"/symbol-referencing constant can only see a label
+        // already defined earlier in the file - unlike referencing that same label from a regular
+        // instruction operand (always fine, resolved in pass 2 once every label is known), or a
+        // plain-literal constant referencing another plain-literal constant (both fully resolved
+        // up front in pass 0, regardless of order).
+        var result = new Asm6502Assembler().Assemble(".label early = loop\nloop:\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.LineNumber == 1 && e.Message.Contains("Undefined"));
+    }
+
+    [Fact]
+    public void Assemble_LabelDirective_CollidingWithEarlierLabel_Fails()
+    {
+        // Must be a "*"/symbol-referencing value to exercise this specific check - a plain
+        // literal like ".label loop = $10" is resolved in pass 0, before any label address is
+        // known, so that collision is instead caught (with a different message) from the label
+        // declaration's own side once pass 1 reaches "loop:" - see the test below.
+        var result = new Asm6502Assembler().Assemble("loop:\nNOP\n.label loop = *\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("already defined as a label"));
+    }
+
+    [Fact]
+    public void Assemble_PlainLiteralLabelDirective_CollidingWithLabelAnywhereInFile_Fails()
+    {
+        // Unlike the symbol-referencing case above, a plain-literal ".label"/constant is resolved
+        // in pass 0 before pass 1 runs, so this collision is caught from the label's own
+        // declaration line regardless of whether the constant appears before or after it in the
+        // file - the same pre-existing behavior a bare "NAME = value" constant already has.
+        var result = new Asm6502Assembler().Assemble("loop:\nNOP\n.label loop = $10\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("already defined as a constant"));
+    }
+
+    // ── "*" (current program counter) ───────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_StarEqualsOrigin_SameAsDotOrg()
+    {
+        var result = new Asm6502Assembler().Assemble("* = $c000\nNOP");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.True(result.HasExplicitOrigin);
+        Assert.Equal(0xC000, result.Origin);
+        Assert.Equal(new byte[] { 0x00, 0xC0, 0xEA }, result.PrgBytes);
+    }
+
+    [Fact]
+    public void Assemble_StarEqualsOrigin_CombinedWithDotOrgFailsAsDuplicate()
+    {
+        // "* =" sets the exact same OrgAddress field ".org" does, so Asm6502Assembler's existing
+        // duplicate-origin check catches this combination for free, regardless of which spelling
+        // is used where.
+        var result = new Asm6502Assembler().Assemble(".org $c000\n* = $d000\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("Duplicate '.org' directive"));
+    }
+
+    [Fact]
+    public void Assemble_StarEqualsOrigin_AfterCodeFails()
+    {
+        var result = new Asm6502Assembler().Assemble("NOP\n* = $c000");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("'.org' must appear before any code"));
+    }
+
+    [Fact]
+    public void Assemble_StarEqualsOrigin_NonNumericValueFails()
+    {
+        var result = new Asm6502Assembler().Assemble("* = somewhere\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.LineNumber == 1 && e.Message.Contains("must be a numeric literal"));
+    }
+
+    [Fact]
+    public void Assemble_JmpStar_UsesTheJmpInstructionsOwnAddress()
+    {
+        // "JMP *" is a common self-loop idiom (e.g. a crash trap) - "*" must resolve to the
+        // address of the JMP instruction itself, not wherever the assembler happens to be by the
+        // time the operand is emitted, and not the file's origin if other code precedes it.
+        var result = new Asm6502Assembler().Assemble(".org $c000\nNOP\nJMP *");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        // NOP is 1 byte, so JMP starts at $c001 - that's what "*" must resolve to.
+        Assert.Equal(new byte[] { 0x4C, 0x01, 0xC0 }, result.PrgBytes![3..]);
+    }
+
+    [Fact]
+    public void Assemble_WordDirectiveWithStar_ResolvesToItsOwnAddress()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $c000\n.word *");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        Assert.Equal(new byte[] { 0x00, 0xC0 }, result.PrgBytes![2..]);
+    }
+
+    [Fact]
+    public void Assemble_ConstantCurrentAddressMinusEarlierLabel_ComputesByteCount()
+    {
+        // The motivating real-world use case: "size = * - start" computes a data block's byte
+        // count once its end address is known, without hand-counting the ".byte" list.
+        var result = new Asm6502Assembler().Assemble(
+            ".org $c000\nstart:\n.byte $01,$02,$03,$04,$05\nsize = * - start\nLDX #size");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => $"L{e.LineNumber}: {e.Message}")));
+        Assert.Equal(5, result.Constants["size"]);
+        Assert.Equal(new byte[] { 0xA2, 0x05 }, result.PrgBytes![^2..]); // LDX #$05
+    }
+
+    [Fact]
+    public void Assemble_ConstantSymbolMinusEarlierSymbol_ComputesDifference()
+    {
+        // Generalizes beyond the "*" case: a constant's offset term can be any earlier symbol,
+        // not just the current address.
+        var result = new Asm6502Assembler().Assemble(
+            ".org $c000\nstart:\n.byte $01,$02,$03\nend:\ndiff = end - start\nLDX #diff");
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => $"L{e.LineNumber}: {e.Message}")));
+        Assert.Equal(3, result.Constants["diff"]);
+    }
+
+    [Fact]
+    public void Assemble_ConstantCurrentAddressMinusUndefinedSymbolFails()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $c000\nsize = * - missing\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.LineNumber == 2 && e.Message.Contains("Undefined label \"missing\""));
     }
 
     // ── .byte directive ───────────────────────────────────────────────────────────
@@ -387,6 +627,130 @@ public class Asm6502AssemblerTests
         ];
 
         Assert.Equal(expected, code);
+    }
+
+    // ── .encoding directive ─────────────────────────────────────────────────────────
+    // KickAssembler-style syntax ported from real-world disassemblies (see astro.asm on GitHub -
+    // MyDeveloperThoughts/astroPANICdissassembly), which uses ".encoding "petscii_mixed"" ahead
+    // of its screen-text ".text" lines.
+
+    [Fact]
+    public void Assemble_NoEncodingDirective_ByteStringIsPlainAsciiAsBefore()
+    {
+        Assert.Equal(new byte[] { 0x53, 0x63, 0x6F, 0x72, 0x65 }, AssembleCode(".text \"Score\""));
+    }
+
+    [Fact]
+    public void Assemble_EncodingPetsciiMixed_InvertsCaseIntoPetsciisShiftedRange()
+    {
+        // The user's real scenario: ".encoding "petscii_mixed"" then ".text "Score:"".
+        byte[] code = AssembleCode(".encoding \"petscii_mixed\"\n.text \"Score:\"");
+
+        Assert.Equal(new byte[] { 0xD3, 0x43, 0x4F, 0x52, 0x45, 0x3A }, code); // S,c,o,r,e,:
+    }
+
+    [Fact]
+    public void Assemble_EncodingPetsciiUpper_FoldsToUppercaseRegardlessOfSourceCase()
+    {
+        byte[] code = AssembleCode(".encoding \"petscii_upper\"\n.text \"Score\"");
+
+        Assert.Equal(new byte[] { 0x53, 0x43, 0x4F, 0x52, 0x45 }, code);
+    }
+
+    [Fact]
+    public void Assemble_EncodingScreencodeMixed_ConvertsThroughToScreenCodes()
+    {
+        byte[] code = AssembleCode(".encoding \"screencode_mixed\"\n.text \"Aa\"");
+
+        Assert.Equal(new byte[] { 0x41, 0x01 }, code);
+    }
+
+    [Fact]
+    public void Assemble_EncodingAppliesOnlyFromItsPointOnward()
+    {
+        // The first .text (before ".encoding") stays plain ASCII; only the second one, after
+        // ".encoding", gets remapped.
+        byte[] code = AssembleCode(".text \"A\"\n.encoding \"petscii_mixed\"\n.text \"A\"");
+
+        Assert.Equal(new byte[] { 0x41, 0xC1 }, code);
+    }
+
+    [Fact]
+    public void Assemble_EncodingBackToAscii_RestoresPlainCharacterCodes()
+    {
+        byte[] code = AssembleCode(".encoding \"petscii_mixed\"\n.text \"A\"\n.encoding \"ascii\"\n.text \"A\"");
+
+        Assert.Equal(new byte[] { 0xC1, 0x41 }, code);
+    }
+
+    [Fact]
+    public void Assemble_EncodingDoesNotAffectNumericByteValues()
+    {
+        byte[] code = AssembleCode(".encoding \"petscii_mixed\"\n.byte $00, \"a\", $00");
+
+        Assert.Equal(new byte[] { 0x00, 0x41, 0x00 }, code);
+    }
+
+    [Fact]
+    public void Assemble_UnknownEncodingModeFails()
+    {
+        var result = new Asm6502Assembler().Assemble(".encoding \"bogus_mode\"\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("Unknown '.encoding' mode"));
+    }
+
+    [Fact]
+    public void Assemble_UnquotedEncodingValueFails()
+    {
+        var result = new Asm6502Assembler().Assemble(".encoding petscii_mixed\nNOP");
+
+        Assert.False(result.Success);
+        Assert.Contains(result.Errors, e => e.Message.Contains("must be a quoted string"));
+    }
+
+    [Fact]
+    public void Assemble_AstroPanicStyleSnippet_CombinesLabelOffsetsShiftMnemonicsAndEncoding()
+    {
+        // A representative excerpt in the shape of the user's real Merlin/KickAssembler port
+        // (astro.asm on GitHub - MyDeveloperThoughts/astroPANICdissassembly): a ".label"
+        // current-address table, an implicit-accumulator shift, and ".encoding"-driven text,
+        // all assembling together without errors.
+        string source = """
+            .org $c000
+
+                    lda #$00
+                    asl
+                    rol
+                    lsr
+
+                    jmp start
+
+            start:
+            .label data      = *
+            .label datplyrx8 = data
+            .label datsaucy  = data+15
+
+                    .byte $00,$01,$02,$03,$04,$05,$06,$07,$08,$09,$0a,$0b,$0c,$0d,$0e
+
+                    lda datplyrx8
+                    ldy datsaucy,x
+
+                    .encoding "petscii_mixed"
+            shstxt: .text "Score:"
+            """;
+
+        var result = new Asm6502Assembler().Assemble(source);
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => $"L{e.LineNumber}: {e.Message}")));
+
+        // start: (a real label) sits after "lda #$00" (2 bytes) + "asl"/"rol"/"lsr" (1 byte each,
+        // implicit accumulator) + "jmp start" (3 bytes) = $c000 + 8 = $c008. "data" (a ".label",
+        // i.e. a constant) is declared right there via "*", so it matches; "datsaucy" is 15 past it.
+        Assert.Equal(0xC008, result.Labels["start"]);
+        Assert.Equal(0xC008, result.Constants["data"]);
+        Assert.Equal(0xC008, result.Constants["datplyrx8"]);
+        Assert.Equal(0xC017, result.Constants["datsaucy"]); // data ($c008) + 15
     }
 
     // ── Low/high byte immediates and symbol offsets ──────────────────────────────
@@ -669,6 +1033,147 @@ public class Asm6502AssemblerTests
         var tokenMnemonics = AsmTokens.Mnemonics.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Assert.Equal(tokenMnemonics, opcodeMnemonics);
+    }
+
+    // A bare "#" with nothing after it (the normal, momentary state of typing "LDA #5" one
+    // keystroke at a time, since diagnostics/symbol-indexing re-parse on every keystroke) used to
+    // throw ArgumentOutOfRangeException out of AsmLineParser.TrySplitOffset instead of reporting a
+    // malformed-operand error - crashing the app on ordinary mid-typing input.
+    [Theory]
+    [InlineData("LDA #")]
+    [InlineData("LDA #<")]
+    [InlineData("LDA #>")]
+    public void Assemble_EmptyImmediateOperand_ReportsErrorRatherThanThrowing(string line)
+    {
+        var result = new Asm6502Assembler().Assemble(".org $C000\n" + line);
+
+        Assert.False(result.Success);
+        Assert.Single(result.Errors);
+    }
+
+    // ── Standalone output mode ────────────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_StandaloneOutput_NoOrg_UsesDefaultOriginNoStub()
+    {
+        var result = new Asm6502Assembler().Assemble("NOP", standaloneOutput: true, defaultOriginAddress: 0xC000);
+
+        Assert.True(result.Success);
+        Assert.Equal(0xC000, result.Origin);
+        Assert.Equal(new byte[] { 0x00, 0xC0, 0xEA }, result.PrgBytes); // header + NOP, no BASIC stub
+    }
+
+    [Fact]
+    public void Assemble_StandaloneOutput_ExplicitOrg_OverridesDefaultOrigin()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $D000\nNOP", standaloneOutput: true, defaultOriginAddress: 0xC000);
+
+        Assert.True(result.Success);
+        Assert.Equal(0xD000, result.Origin);
+        Assert.Equal(new byte[] { 0x00, 0xD0, 0xEA }, result.PrgBytes);
+    }
+
+    [Fact]
+    public void Assemble_NonStandaloneOutput_NoOrg_StillUsesBasicStub()
+    {
+        var result = new Asm6502Assembler().Assemble("NOP", standaloneOutput: false, defaultOriginAddress: 0xC000);
+
+        Assert.True(result.Success);
+        Assert.Equal(0x080E, result.Origin);
+        Assert.Equal(15, result.PrgBytes!.Length - 1); // 15-byte stub + 1-byte NOP
+    }
+
+    // ── HasExplicitOrigin ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_ExplicitOrg_HasExplicitOriginIsTrue()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $C000\nNOP");
+
+        Assert.True(result.HasExplicitOrigin);
+    }
+
+    [Fact]
+    public void Assemble_NoOrg_HasExplicitOriginIsFalse()
+    {
+        var result = new Asm6502Assembler().Assemble("NOP");
+        Assert.False(result.HasExplicitOrigin);
+
+        var standaloneResult = new Asm6502Assembler().Assemble("NOP", standaloneOutput: true, defaultOriginAddress: 0xC000);
+        Assert.False(standaloneResult.HasExplicitOrigin);
+    }
+
+    [Fact]
+    public void Assemble_ExplicitOrg_ButOtherErrors_HasExplicitOriginStillTrue()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $C000\nBOGUS");
+
+        Assert.False(result.Success);
+        Assert.True(result.HasExplicitOrigin);
+    }
+
+    // ── Listing entries ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_ListingEntries_OneEntryPerCodeLine_WithCorrectAddresses()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $0810\nNOP\nLDA #$00", standaloneOutput: false);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.ListingEntries.Count);
+        Assert.Equal(2, result.ListingEntries[0].LineNumber);
+        Assert.Equal(0x0810, result.ListingEntries[0].Address);
+        Assert.Equal(new byte[] { 0xEA }, result.ListingEntries[0].Bytes);
+        Assert.Equal(3, result.ListingEntries[1].LineNumber);
+        Assert.Equal(0x0811, result.ListingEntries[1].Address);
+        Assert.Equal(new byte[] { 0xA9, 0x00 }, result.ListingEntries[1].Bytes);
+    }
+
+    [Fact]
+    public void Assemble_ListingEntries_SkipsLabelAndCommentLines()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $0810\nloop:\n; a comment\nNOP", standaloneOutput: false);
+
+        Assert.True(result.Success);
+        Assert.Single(result.ListingEntries);
+        Assert.Equal(4, result.ListingEntries[0].LineNumber);
+    }
+
+    [Fact]
+    public void Assemble_ListingEntries_ByteDirective_RecordsAllBytesOnOneLine()
+    {
+        var result = new Asm6502Assembler().Assemble(".org $0810\n.byte $01,$02,$03", standaloneOutput: false);
+
+        Assert.True(result.Success);
+        Assert.Single(result.ListingEntries);
+        Assert.Equal(new byte[] { 0x01, 0x02, 0x03 }, result.ListingEntries[0].Bytes);
+    }
+
+    // ── ParsedLines ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Assemble_ParsedLines_OneEntryPerSourceLine_OnSuccess()
+    {
+        var result = new Asm6502Assembler().Assemble("start:\nNOP\nJMP start");
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.ParsedLines.Count);
+        Assert.Equal("start", result.ParsedLines[0].Label);
+        Assert.Equal("NOP", result.ParsedLines[1].Mnemonic);
+        Assert.Equal("JMP", result.ParsedLines[2].Mnemonic);
+    }
+
+    [Fact]
+    public void Assemble_ParsedLines_StillPopulatedWhenAssemblyFails()
+    {
+        // A caller that also needs to index the source (see AsmSymbolIndex) shouldn't lose access
+        // to it just because the file currently has an error - same reasoning as Labels/Constants.
+        var result = new Asm6502Assembler().Assemble("start:\nBOGUS\nJMP start");
+
+        Assert.False(result.Success);
+        Assert.Equal(3, result.ParsedLines.Count);
+        Assert.Equal("start", result.ParsedLines[0].Label);
+        Assert.Equal("JMP", result.ParsedLines[2].Mnemonic);
     }
 
     #endregion

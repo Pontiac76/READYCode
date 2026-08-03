@@ -149,7 +149,27 @@
 
         <!-- Context menu for file items in the Explorer tree -->
         <ContextMenu x:Key="FileContextMenu" Opened="PasteContextMenu_Opened">
-            <MenuItem Header="Open as Hex" Click="FileContextOpenAsHex_Click"/>
+            <MenuItem Header="Open in Hex editor" Click="FileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
+            <Separator/>
+            <MenuItem Header="Cut"   InputGestureText="Ctrl+X" Click="FileContextCut_Click"/>
+            <MenuItem Header="Copy"  InputGestureText="Ctrl+C" Click="FileContextCopy_Click"/>
+            <MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="FileContextPaste_Click"/>
+            <Separator/>
+            <MenuItem Header="Copy Path"          Click="FileContextCopyPath_Click"/>
+            <MenuItem Header="Copy Relative Path" Click="FileContextCopyRelativePath_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="FileContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="FileContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for .bas files in the Explorer tree - same as FileContextMenu but with an
+             "Open in BASIC editor" item, matching double-click. Untokenized ASCII source, not a
+             ready-to-transfer program, so unlike .prg it has no Load/Run items. -->
+        <ContextMenu x:Key="FileBasicContextMenu" Opened="PasteContextMenu_Opened">
+            <MenuItem Header="Open in BASIC editor" Click="FileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="FileContextOpenAsHex_Click"/>
             <Separator/>
             <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
             <Separator/>
@@ -165,12 +185,22 @@
         </ContextMenu>
 
         <!-- Context menu for .prg files confirmed to be BASIC in the Explorer tree - same as
-             FileContextMenu but with an "Open in editor" item, matching double-click. -->
+             FileBasicContextMenu but with Load/Run submenus, since a tokenized .prg is already a
+             ready-to-transfer program. -->
         <ContextMenu x:Key="FilePrgContextMenu" Opened="PasteContextMenu_Opened">
-            <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
+            <MenuItem Header="Open in BASIC editor" Click="FileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="FileContextOpenAsHex_Click"/>
             <Separator/>
-            <MenuItem Header="Open in editor" Click="FileContextOpen_Click"/>
-            <MenuItem Header="Open as Hex"    Click="FileContextOpenAsHex_Click"/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="FileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="FileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="FileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="FileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
             <Separator/>
             <MenuItem Header="Cut"   InputGestureText="Ctrl+X" Click="FileContextCut_Click"/>
             <MenuItem Header="Copy"  InputGestureText="Ctrl+C" Click="FileContextCopy_Click"/>
@@ -183,11 +213,136 @@
             <MenuItem Header="Delete"     InputGestureText="Delete" Click="FileContextDelete_Click"/>
         </ContextMenu>
 
-        <!-- Context menu for "virtual" runnable entries found inside a mounted .d64/.d81 image in
-             the Folder Explorer tree -->
+        <!-- Context menu for machine-language .prg files in the Explorer tree - same as
+             FileContextMenu but with a "Disassemble file" item and Load/Run submenus. -->
+        <ContextMenu x:Key="FileMlContextMenu" Opened="PasteContextMenu_Opened">
+            <MenuItem Header="Disassemble file"   Click="FileContextDisassemble_Click"/>
+            <MenuItem Header="Open in Hex editor" Click="FileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="FileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="FileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="FileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="FileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
+            <Separator/>
+            <MenuItem Header="Cut"   InputGestureText="Ctrl+X" Click="FileContextCut_Click"/>
+            <MenuItem Header="Copy"  InputGestureText="Ctrl+C" Click="FileContextCopy_Click"/>
+            <MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="FileContextPaste_Click"/>
+            <Separator/>
+            <MenuItem Header="Copy Path"          Click="FileContextCopyPath_Click"/>
+            <MenuItem Header="Copy Relative Path" Click="FileContextCopyRelativePath_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="FileContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="FileContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for .asm/.s assembly source files in the Explorer tree - same as
+             FileContextMenu but with an "Open in Assembly editor" item and Load/Run submenus
+             (assembled fresh from source before transferring). -->
+        <ContextMenu x:Key="FileAsmContextMenu" Opened="PasteContextMenu_Opened">
+            <MenuItem Header="Open in Assembly editor" Click="FileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"      Click="FileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="FileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="FileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="FileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="FileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
+            <Separator/>
+            <MenuItem Header="Cut"   InputGestureText="Ctrl+X" Click="FileContextCut_Click"/>
+            <MenuItem Header="Copy"  InputGestureText="Ctrl+C" Click="FileContextCopy_Click"/>
+            <MenuItem Header="Paste" InputGestureText="Ctrl+V" Click="FileContextPaste_Click"/>
+            <Separator/>
+            <MenuItem Header="Copy Path"          Click="FileContextCopyPath_Click"/>
+            <MenuItem Header="Copy Relative Path" Click="FileContextCopyRelativePath_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="FileContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="FileContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" BASIC entries found inside a mounted .d64/.d81 image in the
+             Folder Explorer tree - other kinds use their own dedicated menu below (Prg, Ml, Asm, or
+             hex-only for anything unrecognized). Untokenized ASCII source, so no Load/Run items. -->
         <ContextMenu x:Key="LocalDiskEntryContextMenu">
-            <MenuItem Header="Open in editor" Click="LocalDiskEntryContextOpen_Click"/>
-            <MenuItem Header="Open as Hex"    Click="LocalDiskEntryContextOpenAsHex_Click"/>
+            <MenuItem Header="Open in BASIC editor" Click="LocalDiskEntryContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="LocalDiskEntryContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="LocalDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="LocalDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" Prg entries found inside a mounted .d64/.d81 image in the
+             Folder Explorer tree. -->
+        <ContextMenu x:Key="LocalDiskEntryPrgContextMenu">
+            <MenuItem Header="Open in BASIC editor" Click="LocalDiskEntryContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="LocalDiskEntryContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="LocalDiskEntryContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="LocalDiskEntryContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="LocalDiskEntryContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="LocalDiskEntryContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="LocalDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="LocalDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" machine-language entries found inside a mounted .d64/.d81
+             image in the Folder Explorer tree. -->
+        <ContextMenu x:Key="LocalDiskEntryMlContextMenu">
+            <MenuItem Header="Disassemble file"   Click="LocalDiskEntryContextDisassemble_Click"/>
+            <MenuItem Header="Open in Hex editor" Click="LocalDiskEntryContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="LocalDiskEntryContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="LocalDiskEntryContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="LocalDiskEntryContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="LocalDiskEntryContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="LocalDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="LocalDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" assembly-source entries found inside a mounted .d64/.d81
+             image in the Folder Explorer tree. -->
+        <ContextMenu x:Key="LocalDiskEntryAsmContextMenu">
+            <MenuItem Header="Open in Assembly editor" Click="LocalDiskEntryContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"      Click="LocalDiskEntryContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="LocalDiskEntryContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="LocalDiskEntryContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="LocalDiskEntryContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="LocalDiskEntryContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="LocalDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="LocalDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" entries of an unrecognized kind found inside a mounted
+             .d64/.d81 image in the Folder Explorer tree - no text-editor view makes sense for
+             these, so only the hex view is offered. -->
+        <ContextMenu x:Key="LocalDiskEntryOtherContextMenu">
+            <MenuItem Header="Open in Hex editor" Click="LocalDiskEntryContextOpenAsHex_Click"/>
             <Separator/>
             <MenuItem Header="Rename..." Click="LocalDiskEntryContextRename_Click"/>
             <MenuItem Header="Delete"    Click="LocalDiskEntryContextDelete_Click"/>
@@ -195,8 +350,9 @@
 
         <!-- Context menu for a .d64/.d81 disk image node itself in the Folder Explorer tree -->
         <ContextMenu x:Key="LocalDiskImageContextMenu" Opened="PasteContextMenu_Opened">
+            <MenuItem Header="Open in Hex editor" Click="FileContextOpenAsHex_Click"/>
+            <Separator/>
             <MenuItem Header="Add File..." Click="LocalDiskImageContextAddFile_Click"/>
-            <MenuItem Header="Open as Hex" Click="FileContextOpenAsHex_Click"/>
             <Separator/>
             <MenuItem Header="VICE">
                 <MenuItem Header="Mount Disk" Click="LocalDiskImageContextViceMount_Click"/>
@@ -242,29 +398,85 @@
             <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
         </ContextMenu>
 
-        <!-- Context menu for .bas/.prg items in the C64U tree -->
-        <ContextMenu x:Key="C64URunnableFileContextMenu">
-            <MenuItem Header="Open in editor" Click="C64UFileContextOpen_Click"/>
-            <MenuItem Header="Open as Hex"    Click="C64UFileContextOpenAsHex_Click"/>
+        <!-- Context menu for .bas items in the C64U tree. Untokenized ASCII source, not a
+             ready-to-transfer program, so unlike .prg it has no Load/Run items. -->
+        <ContextMenu x:Key="C64UBasicFileContextMenu">
+            <MenuItem Header="Open in BASIC editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="C64UFileContextOpenAsHex_Click"/>
             <Separator/>
-            <MenuItem Header="Run on C64U"    Click="C64UFileContextRun_Click"/>
-            <MenuItem Header="Load (no run)"  Click="C64UFileContextLoad_Click"/>
-            <Separator/>
-            <MenuItem Header="Download to PC" Click="C64UFileContextDownload_Click"/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
             <Separator/>
             <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
             <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
         </ContextMenu>
 
-        <!-- Context menu for non-runnable, non-disk-image items in the C64U tree - this is the
-             menu machine-language (Ml) files fall into, alongside genuinely unrecognized (Other)
-             ones; "Open in editor" reaches the hex-mode path for Ml, or a plain hex view of
-             whatever bytes an Other file happens to hold. -->
-        <ContextMenu x:Key="C64UOtherFileContextMenu">
-            <MenuItem Header="Open in editor" Click="C64UFileContextOpen_Click"/>
-            <MenuItem Header="Open as Hex"    Click="C64UFileContextOpenAsHex_Click"/>
+        <!-- Context menu for .prg items confirmed to be BASIC in the C64U tree. -->
+        <ContextMenu x:Key="C64UPrgFileContextMenu">
+            <MenuItem Header="Open in BASIC editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="C64UFileContextOpenAsHex_Click"/>
             <Separator/>
-            <MenuItem Header="Download to PC" Click="C64UFileContextDownload_Click"/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for genuinely unrecognized (Other) items in the C64U tree - non-runnable,
+             non-disk-image, and not Prg/Ml/Asm (which get their own dedicated menus below). No
+             text-editor view makes sense for an unrecognized kind, so only the hex view is offered. -->
+        <ContextMenu x:Key="C64UOtherFileContextMenu">
+            <MenuItem Header="Open in Hex editor" Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for machine-language (Ml) items in the C64U tree. -->
+        <ContextMenu x:Key="C64UMlFileContextMenu">
+            <MenuItem Header="Disassemble file"   Click="C64UFileContextDisassemble_Click"/>
+            <MenuItem Header="Open in Hex editor" Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
+            <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for assembly-source (Asm) items in the C64U tree. -->
+        <ContextMenu x:Key="C64UAsmFileContextMenu">
+            <MenuItem Header="Open in Assembly editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"      Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
             <Separator/>
             <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
             <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
@@ -272,22 +484,92 @@
 
         <!-- Context menu for .d64/.d81 disk image items in the C64U tree -->
         <ContextMenu x:Key="C64UDiskImageContextMenu">
+            <MenuItem Header="Open in Hex editor" Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
             <MenuItem Header="Add File..." Click="C64UDiskImageContextAddFile_Click"/>
-            <MenuItem Header="Open as Hex" Click="C64UFileContextOpenAsHex_Click"/>
             <Separator/>
             <MenuItem Header="Mount to Drive A" Click="C64UFileContextMountA_Click"/>
             <MenuItem Header="Mount to Drive B" Click="C64UFileContextMountB_Click"/>
             <Separator/>
-            <MenuItem Header="Download to PC" Click="C64UFileContextDownload_Click"/>
+            <MenuItem Header="Download to PC..." Click="C64UFileContextDownload_Click"/>
             <Separator/>
             <MenuItem Header="Rename..."  InputGestureText="F2"     Click="C64UContextRename_Click"/>
             <MenuItem Header="Delete"     InputGestureText="Delete" Click="C64UContextDelete_Click"/>
         </ContextMenu>
 
-        <!-- Context menu for "virtual" runnable entries found inside a mounted .d64/.d81 image -->
+        <!-- Context menu for "virtual" BASIC entries found inside a mounted .d64/.d81 image - other
+             kinds use their own dedicated menu below (Prg, Ml, Asm, or hex-only for anything
+             unrecognized). Untokenized ASCII source, so no Load/Run items. -->
         <ContextMenu x:Key="C64UDiskEntryContextMenu">
-            <MenuItem Header="Open in editor" Click="C64UFileContextOpen_Click"/>
-            <MenuItem Header="Open as Hex"    Click="C64UFileContextOpenAsHex_Click"/>
+            <MenuItem Header="Open in BASIC editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="C64UDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="C64UDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" Prg entries found inside a mounted .d64/.d81 image in the
+             C64U tree. -->
+        <ContextMenu x:Key="C64UDiskEntryPrgContextMenu">
+            <MenuItem Header="Open in BASIC editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"   Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="C64UDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="C64UDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" machine-language entries found inside a mounted .d64/.d81
+             image in the C64U tree. -->
+        <ContextMenu x:Key="C64UDiskEntryMlContextMenu">
+            <MenuItem Header="Disassemble file"   Click="C64UFileContextDisassemble_Click"/>
+            <MenuItem Header="Open in Hex editor" Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="C64UDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="C64UDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" assembly-source entries found inside a mounted .d64/.d81
+             image in the C64U tree. -->
+        <ContextMenu x:Key="C64UDiskEntryAsmContextMenu">
+            <MenuItem Header="Open in Assembly editor" Click="C64UFileContextOpen_Click"/>
+            <MenuItem Header="Open in Hex editor"      Click="C64UFileContextOpenAsHex_Click"/>
+            <Separator/>
+            <MenuItem Header="Load">
+                <MenuItem Header="C64U" InputGestureText="Ctrl+F5"     Click="C64UFileContextLoadC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Ctrl+Alt+F5" Click="C64UFileContextLoadVice_Click"/>
+            </MenuItem>
+            <MenuItem Header="Run">
+                <MenuItem Header="C64U" InputGestureText="F5"     Click="C64UFileContextRunC64U_Click"/>
+                <MenuItem Header="VICE" InputGestureText="Alt+F5" Click="C64UFileContextRunVice_Click"/>
+            </MenuItem>
+            <Separator/>
+            <MenuItem Header="Rename..." Click="C64UDiskEntryContextRename_Click"/>
+            <MenuItem Header="Delete"    Click="C64UDiskEntryContextDelete_Click"/>
+        </ContextMenu>
+
+        <!-- Context menu for "virtual" entries of an unrecognized kind found inside a mounted
+             .d64/.d81 image in the C64U tree - no text-editor view makes sense for these, so only
+             the hex view is offered. -->
+        <ContextMenu x:Key="C64UDiskEntryOtherContextMenu">
+            <MenuItem Header="Open in Hex editor" Click="C64UFileContextOpenAsHex_Click"/>
             <Separator/>
             <MenuItem Header="Rename..." Click="C64UDiskEntryContextRename_Click"/>
             <MenuItem Header="Delete"    Click="C64UDiskEntryContextDelete_Click"/>
@@ -848,9 +1130,10 @@
                 <MenuItem Header="M_ake Uppercase" Command="{Binding EditMakeUppercaseCommand}" InputGestureText="Ctrl+Shift+U"/>
                 <MenuItem Header="Make _Lowercase" Command="{Binding EditMakeLowercaseCommand}"/>
                 <Separator/>
-                <MenuItem Header="Minif_y Code"   Command="{Binding EditMinifyCommand}"   InputGestureText="Ctrl+M"/>
-                <MenuItem Header="Prett_ify Code" Command="{Binding EditPrettifyCommand}" InputGestureText="Ctrl+Shift+M"/>
-                <MenuItem Header="Renu_mber Code" Command="{Binding EditRenumberCommand}" InputGestureText="Ctrl+R"/>
+                <MenuItem x:Name="MinifyMenuItem"   Header="Minif_y Code"   Command="{Binding EditMinifyCommand}"   InputGestureText="Ctrl+M"/>
+                <MenuItem x:Name="PrettifyMenuItem" Header="Prett_ify Code" Command="{Binding EditPrettifyCommand}" InputGestureText="Ctrl+Shift+M"/>
+                <MenuItem x:Name="RenumberMenuItem" Header="Renu_mber Code" Command="{Binding EditRenumberCommand}" InputGestureText="Ctrl+R"/>
+                <MenuItem x:Name="FormatMenuItem"   Header="_Format Code"   Command="{Binding EditFormatCommand}"   InputGestureText="Ctrl+K Ctrl+F" Visibility="Collapsed"/>
                 <Separator/>
                 <MenuItem Header="_Find"    Command="{Binding EditFindCommand}"    InputGestureText="Ctrl+F">
                     <MenuItem.Icon><TextBlock Text="&#xE721;" Style="{StaticResource MenuItemIconText}"/></MenuItem.Icon>
@@ -906,6 +1189,8 @@
                 <MenuItem Header="Res_ume"    Command="{Binding ViewModel.C64UResumeCommand}"/>
                 <MenuItem Header="Power _Off" Command="{Binding ViewModel.C64UPowerOffCommand}"/>
                 <Separator/>
+                <MenuItem Header="_Disassemble at..." Click="C64UDisassemble_Click"/>
+                <Separator/>
                 <MenuItem Header="_About My C64U" Command="{Binding ViewModel.C64USystemInfoCommand}"/>
             </MenuItem>
 
@@ -920,6 +1205,8 @@
                 <MenuItem Header="_Pause"     Command="{Binding ViewModel.VicePauseCommand}"/>
                 <MenuItem Header="Res_ume"    Command="{Binding ViewModel.ViceResumeCommand}"/>
                 <MenuItem Header="Power _Off" Command="{Binding ViewModel.VicePowerOffCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Disassemble at..." Click="ViceDisassemble_Click"/>
                 <Separator/>
                 <MenuItem Header="_About VICE" Command="{Binding ViewModel.ViceSystemInfoCommand}"/>
             </MenuItem>
@@ -1199,15 +1486,23 @@
                                     <DataTrigger Binding="{Binding IsFolder}" Value="False">
                                         <Setter Property="ContextMenu" Value="{StaticResource FileContextMenu}"/>
                                     </DataTrigger>
-                                    <!-- .prg files confirmed to be BASIC get an "Open in editor" item; declared
-                                         after the IsFolder=False trigger above so it wins for this Kind. -->
+                                    <!-- .bas/.prg files confirmed to be BASIC get an "Open in BASIC editor" item;
+                                         declared after the IsFolder=False trigger above so it wins for this Kind.
+                                         Only Prg (a ready-to-transfer tokenized program) also gets Load/Run - Bas
+                                         is untokenized ASCII source. -->
+                                    <DataTrigger Binding="{Binding Kind}" Value="Bas">
+                                        <Setter Property="ContextMenu" Value="{StaticResource FileBasicContextMenu}"/>
+                                    </DataTrigger>
                                     <DataTrigger Binding="{Binding Kind}" Value="Prg">
                                         <Setter Property="ContextMenu" Value="{StaticResource FilePrgContextMenu}"/>
                                     </DataTrigger>
-                                    <!-- Machine-language .prg files get the same "Open in editor" item, which
-                                         opens them in the hex grid instead of as (garbage) BASIC text. -->
+                                    <!-- Machine-language .prg files get "Disassemble file" instead. -->
                                     <DataTrigger Binding="{Binding Kind}" Value="Ml">
-                                        <Setter Property="ContextMenu" Value="{StaticResource FilePrgContextMenu}"/>
+                                        <Setter Property="ContextMenu" Value="{StaticResource FileMlContextMenu}"/>
+                                    </DataTrigger>
+                                    <!-- Assembly source files get "Open in Assembly editor" instead. -->
+                                    <DataTrigger Binding="{Binding Kind}" Value="Asm">
+                                        <Setter Property="ContextMenu" Value="{StaticResource FileAsmContextMenu}"/>
                                     </DataTrigger>
                                     <!-- A .d64/.d81 disk image node itself gets "Add File..." alongside the usual
                                          file actions; declared after Kind=Prg so it wins for disk images. -->
@@ -1215,9 +1510,9 @@
                                         <Setter Property="ContextMenu" Value="{StaticResource LocalDiskImageContextMenu}"/>
                                     </DataTrigger>
                                     <!-- "Virtual" entries live only inside a disk image - Cut/Copy/Paste/Rename/
-                                         Delete/Reveal above don't apply, so these two triggers, declared last,
-                                         win: no context menu by default, or just "Open in editor" for the
-                                         openable (BASIC/ML) ones. -->
+                                         Delete/Reveal above don't apply, so these triggers, declared last, win: no
+                                         context menu by default, or just "Open in BASIC editor"/"Disassemble file"/
+                                         "Open in Assembly editor"/hex-only for an unrecognized kind. -->
                                     <DataTrigger Binding="{Binding IsVirtual}" Value="True">
                                         <Setter Property="ContextMenu" Value="{x:Null}"/>
                                     </DataTrigger>
@@ -1227,6 +1522,36 @@
                                             <Condition Binding="{Binding IsOpenable}" Value="True"/>
                                         </MultiDataTrigger.Conditions>
                                         <Setter Property="ContextMenu" Value="{StaticResource LocalDiskEntryContextMenu}"/>
+                                    </MultiDataTrigger>
+                                    <!-- Declared after the general openable-virtual-entry trigger above so each
+                                         wins for its own Kind specifically. -->
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                            <Condition Binding="{Binding Kind}" Value="Prg"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="ContextMenu" Value="{StaticResource LocalDiskEntryPrgContextMenu}"/>
+                                    </MultiDataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                            <Condition Binding="{Binding Kind}" Value="Ml"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="ContextMenu" Value="{StaticResource LocalDiskEntryMlContextMenu}"/>
+                                    </MultiDataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                            <Condition Binding="{Binding Kind}" Value="Asm"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="ContextMenu" Value="{StaticResource LocalDiskEntryAsmContextMenu}"/>
+                                    </MultiDataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                            <Condition Binding="{Binding Kind}" Value="Other"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="ContextMenu" Value="{StaticResource LocalDiskEntryOtherContextMenu}"/>
                                     </MultiDataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -1264,7 +1589,9 @@
                               BorderThickness="0"
                               ItemsSource="{Binding ViewModel.Variables}"
                               MouseDoubleClick="VariablesTree_MouseDoubleClick"
-                              PreviewKeyDown="VariablesTree_PreviewKeyDown">
+                              PreviewKeyDown="VariablesTree_PreviewKeyDown"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <TreeView.Resources>
                             <ContextMenu x:Key="VariableContextMenu">
                                 <MenuItem Header="_Rename" InputGestureText="F2" Click="VariableContextRename_Click"/>
@@ -1358,7 +1685,9 @@
                               Background="{DynamicResource ThemeFolderExplorerBg}"
                               BorderThickness="0"
                               ItemsSource="{Binding ViewModel.SymbolGroups}"
-                              MouseDoubleClick="SymbolsTree_MouseDoubleClick">
+                              MouseDoubleClick="SymbolsTree_MouseDoubleClick"
+                              VirtualizingPanel.IsVirtualizing="True"
+                              VirtualizingPanel.VirtualizationMode="Recycling">
                         <TreeView.Resources>
                             <HierarchicalDataTemplate DataType="{x:Type models:AsmSymbolGroupInfo}" ItemsSource="{Binding Symbols}">
                                 <TextBlock FontSize="12" FontWeight="SemiBold"
@@ -1548,9 +1877,11 @@
                         <TreeView x:Name="C64UFileTree"
                                   Background="{DynamicResource ThemeFolderExplorerBg}"
                                   BorderThickness="0"
+                                  AllowDrop="True"
                                   ItemsSource="{Binding ViewModel.C64UFileItems}"
                                   Visibility="{Binding ViewModel.IsC64UConnected, Converter={StaticResource BoolToVisibility}}"
                                   MouseDoubleClick="C64UFileTree_MouseDoubleClick"
+                                  PreviewMouseLeftButtonDown="C64UFileTree_PreviewMouseLeftButtonDown"
                                   PreviewMouseRightButtonDown="TreeViewItem_PreviewMouseRightButtonDown"
                                   PreviewKeyDown="C64UFileTree_PreviewKeyDown">
                             <TreeView.ItemTemplate>
@@ -1655,12 +1986,23 @@
                             </TreeView.ItemTemplate>
                             <TreeView.ItemContainerStyle>
                                 <Style TargetType="TreeViewItem" BasedOn="{StaticResource ExplorerTreeItemStyle}">
+                                    <EventSetter Event="PreviewMouseMove" Handler="C64UFileTreeItem_PreviewMouseMove"/>
+                                    <EventSetter Event="DragOver"         Handler="C64UFileTreeItem_DragOver"/>
+                                    <EventSetter Event="DragLeave"        Handler="C64UFileTreeItem_DragLeave"/>
+                                    <EventSetter Event="Drop"             Handler="C64UFileTreeItem_Drop"/>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsFolder}" Value="True">
                                             <Setter Property="ContextMenu" Value="{StaticResource C64UFolderContextMenu}"/>
                                         </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsRunnable}" Value="True">
-                                            <Setter Property="ContextMenu" Value="{StaticResource C64URunnableFileContextMenu}"/>
+                                        <!-- Bas and Prg are both "runnable" (IsRunnable), but only Prg (a
+                                             ready-to-transfer tokenized program) gets Load/Run - Bas is
+                                             untokenized ASCII source - so each gets its own Kind-specific
+                                             trigger rather than sharing one IsRunnable-based menu. -->
+                                        <DataTrigger Binding="{Binding Kind}" Value="Bas">
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UBasicFileContextMenu}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding Kind}" Value="Prg">
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UPrgFileContextMenu}"/>
                                         </DataTrigger>
                                         <MultiDataTrigger>
                                             <MultiDataTrigger.Conditions>
@@ -1669,15 +2011,26 @@
                                             </MultiDataTrigger.Conditions>
                                             <Setter Property="ContextMenu" Value="{StaticResource C64UOtherFileContextMenu}"/>
                                         </MultiDataTrigger>
-                                        <!-- Declared after the "other file" trigger above so it wins for disk
-                                             images (WPF applies the last-matching trigger in declaration order). -->
+                                        <!-- Machine-language files get "Disassemble file" instead of "Open in
+                                             editor"; declared after the "other file" trigger above so it wins for
+                                             this Kind (WPF applies the last-matching trigger in declaration order). -->
+                                        <DataTrigger Binding="{Binding Kind}" Value="Ml">
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UMlFileContextMenu}"/>
+                                        </DataTrigger>
+                                        <!-- Assembly source files get "Open in Assembly editor" instead. -->
+                                        <DataTrigger Binding="{Binding Kind}" Value="Asm">
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UAsmFileContextMenu}"/>
+                                        </DataTrigger>
+                                        <!-- Declared after the "other file"/Ml/Asm triggers above so it wins for
+                                             disk images. -->
                                         <DataTrigger Binding="{Binding IsDiskImage}" Value="True">
                                             <Setter Property="ContextMenu" Value="{StaticResource C64UDiskImageContextMenu}"/>
                                         </DataTrigger>
                                         <!-- "Virtual" entries live only inside a disk image - none of the actions
-                                             above (mount/run/download/rename/delete) apply, so these two triggers,
+                                             above (mount/run/download/rename/delete) apply, so these triggers,
                                              declared last, win: no context menu by default, or just "Open in
-                                             editor" for the openable (BASIC/ML) ones. -->
+                                             BASIC editor"/"Disassemble file"/"Open in Assembly editor"/hex-only for
+                                             an unrecognized kind. -->
                                         <DataTrigger Binding="{Binding IsVirtual}" Value="True">
                                             <Setter Property="ContextMenu" Value="{x:Null}"/>
                                         </DataTrigger>
@@ -1687,6 +2040,36 @@
                                                 <Condition Binding="{Binding IsOpenable}" Value="True"/>
                                             </MultiDataTrigger.Conditions>
                                             <Setter Property="ContextMenu" Value="{StaticResource C64UDiskEntryContextMenu}"/>
+                                        </MultiDataTrigger>
+                                        <!-- Declared after the general openable-virtual-entry trigger above so each
+                                             wins for its own Kind specifically. -->
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                                <Condition Binding="{Binding Kind}" Value="Prg"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UDiskEntryPrgContextMenu}"/>
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                                <Condition Binding="{Binding Kind}" Value="Ml"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UDiskEntryMlContextMenu}"/>
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                                <Condition Binding="{Binding Kind}" Value="Asm"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UDiskEntryAsmContextMenu}"/>
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsVirtual}" Value="True"/>
+                                                <Condition Binding="{Binding Kind}" Value="Other"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="ContextMenu" Value="{StaticResource C64UDiskEntryOtherContextMenu}"/>
                                         </MultiDataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -2010,25 +2393,36 @@
                            Opacity="0.5"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Visibility="Visible"/>
-                    <avalonEdit:TextEditor x:Name="Editor"
-                             Margin="0"
-                             Padding="10"
-                             FontFamily="../Assets/Fonts/#Pet Me 64"
-                             FontSize="16"
-                             Foreground="#000000"
-                             Background="{DynamicResource ThemeEditorBg}"
-                             WordWrap="False"
-                             ShowLineNumbers="False"
-                             HorizontalScrollBarVisibility="Auto"
-                             VerticalScrollBarVisibility="Auto"
-                             ContextMenu="{StaticResource EditorContextMenu}"
-                             TextChanged="Editor_TextChanged"
-                             PreviewKeyDown="Editor_PreviewKeyDown"
-                             PreviewTextInput="Editor_PreviewTextInput"
-                             MouseHover="Editor_MouseHover"
-                             MouseHoverStopped="Editor_MouseHoverStopped"
-                             PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"
-                             Visibility="Collapsed"/>
+                    <!-- Groups the disassembly toolbar with Editor so the toolbar occupies a fixed
+                         strip above the text rather than overlapping it - EditorContainer's own
+                         Visibility (not Editor's) is what ActivateTab toggles for a text tab now,
+                         so the toolbar hides/shows independently via DisassemblyToolbar.Visibility. -->
+                    <Grid x:Name="EditorContainer" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <local:DisassemblyToolbarControl x:Name="DisassemblyToolbar" Grid.Row="0"
+                                 DisassembleRequested="DisassemblyToolbar_DisassembleRequested"/>
+                        <avalonEdit:TextEditor x:Name="Editor" Grid.Row="1"
+                                 Margin="0"
+                                 Padding="10"
+                                 FontFamily="../Assets/Fonts/#Pet Me 64"
+                                 FontSize="16"
+                                 Foreground="#000000"
+                                 Background="{DynamicResource ThemeEditorBg}"
+                                 WordWrap="False"
+                                 ShowLineNumbers="False"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Auto"
+                                 ContextMenu="{StaticResource EditorContextMenu}"
+                                 TextChanged="Editor_TextChanged"
+                                 PreviewKeyDown="Editor_PreviewKeyDown"
+                                 PreviewTextInput="Editor_PreviewTextInput"
+                                 MouseHover="Editor_MouseHover"
+                                 MouseHoverStopped="Editor_MouseHoverStopped"
+                                 PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"/>
+                    </Grid>
                     <local:HexEditorControl x:Name="HexEditor" ContextMenu="{StaticResource HexEditorContextMenu}"/>
                     <local:FindBarControl x:Name="FindBar"
                                          HorizontalAlignment="Right"

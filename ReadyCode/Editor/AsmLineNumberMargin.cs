@@ -21,6 +21,9 @@ public class AsmLineNumberMargin : AbstractMargin
 
     private const double _rightPadding = 4;
 
+    // Immutable, so built once rather than per glyph/render pass.
+    private static readonly Typeface _typeface = new("Consolas");
+
     #endregion
 
     #region Public Properties
@@ -41,6 +44,15 @@ public class AsmLineNumberMargin : AbstractMargin
     /// </summary>
     public double FontSize { get; set; } = 12;
 
+    /// <summary>
+    /// Gets or sets the memory address each document line represents, keyed by 1-based line
+    /// number, or null to show ordinary sequential line numbers instead. Set for a disassembly
+    /// tab (see <see cref="ReadyCode.Models.EditorTab.DisassemblyLineAddresses"/>) so the gutter
+    /// shows real addresses; a line with no entry (e.g. the ".org" line) is left blank rather
+    /// than falling back to a line number that would misleadingly imply a real address.
+    /// </summary>
+    public IReadOnlyDictionary<int, ushort>? LineAddresses { get; set; }
+
     #endregion
 
     #region Protected Methods
@@ -52,6 +64,12 @@ public class AsmLineNumberMargin : AbstractMargin
     /// <param name="availableSize">The available size.</param>
     protected override Size MeasureOverride(Size availableSize)
     {
+        if (LineAddresses != null)
+        {
+            double addressWidth = CreateFormattedText("$FFFF").Width + _rightPadding;
+            return new Size(addressWidth, 0);
+        }
+
         int lineCount = Document?.LineCount ?? 1;
         int digitCount = Math.Max(ZeroPadWidth, lineCount.ToString(CultureInfo.InvariantCulture).Length);
         double width = CreateFormattedText(new string('8', digitCount)).Width + _rightPadding;
@@ -71,12 +89,28 @@ public class AsmLineNumberMargin : AbstractMargin
         foreach (VisualLine line in textView.VisualLines)
         {
             int lineNumber = line.FirstDocumentLine.LineNumber;
-            string text = ZeroPadWidth > 0
-                ? lineNumber.ToString(CultureInfo.InvariantCulture).PadLeft(ZeroPadWidth, '0')
-                : lineNumber.ToString(CultureInfo.InvariantCulture);
+
+            string text;
+            if (LineAddresses != null)
+            {
+                if (!LineAddresses.TryGetValue(lineNumber, out ushort address)) continue;
+                text = "$" + address.ToString("X4", CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                text = ZeroPadWidth > 0
+                    ? lineNumber.ToString(CultureInfo.InvariantCulture).PadLeft(ZeroPadWidth, '0')
+                    : lineNumber.ToString(CultureInfo.InvariantCulture);
+            }
 
             var formattedText = CreateFormattedText(text);
-            double y = line.VisualTop - textView.VerticalOffset;
+
+            // Centered within the visual line's real height rather than anchored to its top -
+            // FormattedText's own line-height metrics for a given font/size don't necessarily
+            // match AvalonEdit's, so top-anchoring alone left the number visibly higher than the
+            // code text beside it (most noticeable on a disassembly tab, where every single line
+            // has a long trailing comment).
+            double y = line.VisualTop - textView.VerticalOffset + (line.Height - formattedText.Height) / 2;
             drawingContext.DrawText(formattedText, new Point(ActualWidth - _rightPadding - formattedText.Width, y));
         }
     }
@@ -121,7 +155,7 @@ public class AsmLineNumberMargin : AbstractMargin
 
     private FormattedText CreateFormattedText(string text) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-            new Typeface("Consolas"), FontSize, TextBrush, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            _typeface, FontSize, TextBrush, VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
     #endregion
 }
