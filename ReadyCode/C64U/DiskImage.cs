@@ -173,6 +173,19 @@ public class DiskImage
     /// <returns>The updated image's raw bytes; <paramref name="diskImage"/> is left unmodified.</returns>
     /// <exception cref="InvalidOperationException">The disk has no free sectors or directory entries remaining.</exception>
     public byte[] AddEntry(byte[] diskImage, string name, C64UFileKind kind, byte[] content)
+        => AddEntry(diskImage, name, kind, content, 0x02); // default: PRG type
+
+    /// <summary>
+    /// Adds a new entry to the disk with a specific CBM DOS file type.
+    /// </summary>
+    /// <param name="diskImage">The raw bytes of the disk image file.</param>
+    /// <param name="name">The entry's name, as it will appear in the directory (PETSCII-encoded, truncated to 16 characters).</param>
+    /// <param name="kind">The entry's kind.</param>
+    /// <param name="content">The entry's raw content.</param>
+    /// <param name="typeByte">CBM DOS file type: 0x01 (SEQ), 0x02 (PRG), 0x03 (USR).</param>
+    /// <returns>The updated image's raw bytes; <paramref name="diskImage"/> is left unmodified.</returns>
+    /// <exception cref="InvalidOperationException">The disk has no free sectors or directory entries remaining.</exception>
+    public byte[] AddEntry(byte[] diskImage, string name, C64UFileKind kind, byte[] content, byte typeByte)
     {
         ValidateImageSize(diskImage);
         var image = (byte[])diskImage.Clone();
@@ -181,7 +194,7 @@ public class DiskImage
         WriteFileChain(image, chain, content);
 
         var slot = FindFreeDirectorySlotOrExtend(image);
-        WriteDirectoryEntry(image, slot, name, chain[0].Track, chain[0].Sector);
+        WriteDirectoryEntry(image, slot, name, chain[0].Track, chain[0].Sector, typeByte, chain.Count);
 
         return image;
     }
@@ -297,9 +310,9 @@ public class DiskImage
         return (sectorsBefore + sector) * 256;
     }
 
-    // Decodes a 16-byte PETSCII filename field. Bytes 0x20-0x5F are identical to ASCII in that
-    // range (digits, uppercase letters, and common punctuation), which covers the vast majority
-    // of real disk filenames; anything else becomes '?'. Trailing 0xA0 padding is trimmed.
+    // Decodes a 16-byte PETSCII filename field. Bytes 0x20-0x7E are kept as ASCII so mixed-case
+    // hand-authored manifest entries can round-trip as directory art/comments. Trailing 0xA0
+    // padding is trimmed.
     private static string DecodeName(ReadOnlySpan<byte> raw)
     {
         int length = raw.Length;
@@ -310,7 +323,7 @@ public class DiskImage
         for (int i = 0; i < length; i++)
         {
             byte b = raw[i];
-            chars[i] = b is >= 0x20 and <= 0x5F ? (char)b : '?';
+            chars[i] = b is >= 0x20 and <= 0x7E ? (char)b : '?';
         }
 
         return new string(chars);
@@ -464,13 +477,18 @@ public class DiskImage
         return AllocateSectorChain(diskImage, 1)[0];
     }
 
-    private void WriteDirectoryEntry(byte[] diskImage, (int Track, int Sector, int Index) slot, string name, int fileTrack, int fileSector)
+    private void WriteDirectoryEntry(byte[] diskImage, (int Track, int Sector, int Index) slot, string name, int fileTrack, int fileSector, byte typeByte, int blockCount)
     {
         int entryOffset = SectorOffset(slot.Track, slot.Sector) + 2 + slot.Index * 32;
-        diskImage[entryOffset] = 0x82; // closed (0x80) + PRG type (0x02)
+        diskImage[entryOffset] = (byte)(0x80 | typeByte); // closed (0x80) + type
         diskImage[entryOffset + 1] = (byte)fileTrack;
         diskImage[entryOffset + 2] = (byte)fileSector;
         Array.Copy(EncodeName(name, 16), 0, diskImage, entryOffset + 3, 16);
+
+        // Directory entry bytes 28-29 store the file's size in blocks/sectors, little-endian.
+        // Directory tools and LOAD"$",8 display this value, not a computed sector-chain size.
+        diskImage[entryOffset + 28] = (byte)(blockCount & 0xFF);
+        diskImage[entryOffset + 29] = (byte)((blockCount >> 8) & 0xFF);
     }
 
     private (int Track, int Sector, int Index)? FindDirectorySlotByName(byte[] diskImage, string name)
@@ -513,17 +531,23 @@ public class DiskImage
         int totalTracks = _geometry.SectorsPerTrack.Length - 1;
         int bitmapBytes = _geometry.Format == DiskFormat.D64 ? 3 : 5;
 
+        // BAM lives in the directory track's sectors. For D64 it is a single sector;
+        // for D81 it spans two sectors (tracks 1-40 in sector 1, 41-80 in sector 2).
         for (int t = 1; t <= totalTracks; t++)
         {
             var (bamTrack, bamSector, byteOffset) = LocateBamEntry(t);
-            int sectorOffset = SectorOffset(bamTrack, bamSector);
+            int bamSectorOffset = SectorOffset(bamTrack, bamSector);
             int count = _geometry.SectorsPerTrack[t];
-            diskImage[sectorOffset + byteOffset] = (byte)count;
+            int entryOff = bamSectorOffset + byteOffset;
+            diskImage[entryOff] = (byte)count;
 
+            // BAM sector bitmaps are stored little-endian by sector number: byte 0 covers
+            // sectors 0-7, byte 1 covers sectors 8-15, and so on.
+            ulong mask = count == 0 ? 0UL : ((1UL << count) - 1);
             for (int b = 0; b < bitmapBytes; b++)
             {
-                int bitsInThisByte = Math.Clamp(count - b * 8, 0, 8);
-                diskImage[sectorOffset + byteOffset + 1 + b] = bitsInThisByte == 0 ? (byte)0 : (byte)((1 << bitsInThisByte) - 1);
+                int shift = b * 8;
+                diskImage[entryOff + 1 + b] = (byte)((mask >> shift) & 0xFF);
             }
         }
 
@@ -589,20 +613,20 @@ public class DiskImage
             diskImage[bam1Offset + 0] = (byte)_geometry.DirectoryTrack;
             diskImage[bam1Offset + 1] = 2;
             diskImage[bam1Offset + 2] = (byte)'D';
-            diskImage[bam1Offset + 3] = 0;
+            diskImage[bam1Offset + 3] = 0xBB;
             diskImage[bam1Offset + 4] = diskId[0];
             diskImage[bam1Offset + 5] = diskId[1];
-            diskImage[bam1Offset + 6] = (byte)'D';
+            diskImage[bam1Offset + 6] = 0xC0;
             diskImage[bam1Offset + 7] = 0;
 
             int bam2Offset = SectorOffset(_geometry.DirectoryTrack, 2);
             diskImage[bam2Offset + 0] = 0;
             diskImage[bam2Offset + 1] = 0xFF;
             diskImage[bam2Offset + 2] = (byte)'D';
-            diskImage[bam2Offset + 3] = 0;
+            diskImage[bam2Offset + 3] = 0xBB;
             diskImage[bam2Offset + 4] = diskId[0];
             diskImage[bam2Offset + 5] = diskId[1];
-            diskImage[bam2Offset + 6] = (byte)'D';
+            diskImage[bam2Offset + 6] = 0xC0;
             diskImage[bam2Offset + 7] = 0;
         }
     }
@@ -624,7 +648,9 @@ public class DiskImage
     private bool IsSectorFree(byte[] diskImage, int track, int sector)
     {
         var (bamTrack, bamSector, byteOffset) = LocateBamEntry(track);
+        int bitmapBytes = _geometry.Format == DiskFormat.D64 ? 3 : 5;
         int bitmapStart = SectorOffset(bamTrack, bamSector) + byteOffset + 1;
+        // Bitmap byte 0 covers sectors 0-7, byte 1 covers sectors 8-15, etc.
         int byteIndex = sector / 8;
         int bitIndex = sector % 8;
         return (diskImage[bitmapStart + byteIndex] & (1 << bitIndex)) != 0;
@@ -634,7 +660,9 @@ public class DiskImage
     {
         var (bamTrack, bamSector, byteOffset) = LocateBamEntry(track);
         int sectorOffset = SectorOffset(bamTrack, bamSector);
+        int bitmapBytes = _geometry.Format == DiskFormat.D64 ? 3 : 5;
         int bitmapStart = sectorOffset + byteOffset + 1;
+        // Bitmap byte 0 covers sectors 0-7, byte 1 covers sectors 8-15, etc.
         int byteIndex = sector / 8;
         int bitIndex = sector % 8;
 
@@ -650,19 +678,20 @@ public class DiskImage
         diskImage[freeCountOffset] = (byte)(diskImage[freeCountOffset] + (free ? 1 : -1));
     }
 
-    // Encodes a name into a fixed-width PETSCII field: uppercased, truncated/padded to `length`
-    // with 0xA0, the inverse of DecodeName's byte mapping.
+    // Encodes a name into a fixed-width PETSCII field, truncated/padded to `length` with 0xA0,
+    // the inverse of DecodeName's byte mapping. Callers decide whether to normalize case first:
+    // source-backed manifest entries use CBM-style uppercase, while hand-authored missing entries
+    // can preserve mixed case for directory art/comments.
     private static byte[] EncodeName(string name, int length)
     {
         var bytes = new byte[length];
         Array.Fill(bytes, (byte)0xA0);
 
-        string upper = name.ToUpperInvariant();
-        int count = Math.Min(upper.Length, length);
+        int count = Math.Min(name.Length, length);
         for (int i = 0; i < count; i++)
         {
-            char c = upper[i];
-            bytes[i] = c is >= (char)0x20 and <= (char)0x5F ? (byte)c : (byte)'?';
+            char c = name[i];
+            bytes[i] = c is >= (char)0x20 and <= (char)0x7E ? (byte)c : (byte)'?';
         }
 
         return bytes;

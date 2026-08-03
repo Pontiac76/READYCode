@@ -26,6 +26,11 @@ public class C64UDriveStatus
     public string? Type { get; init; }
 
     /// <summary>
+    /// Gets the IEC device number for this drive, when reported by the device.
+    /// </summary>
+    public int? DeviceNumber { get; init; }
+
+    /// <summary>
     /// Gets the full path of the currently mounted disk image, or empty if nothing is mounted.
     /// </summary>
     public string ImageFile { get; init; } = "";

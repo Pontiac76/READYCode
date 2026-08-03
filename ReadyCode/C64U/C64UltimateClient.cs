@@ -100,6 +100,48 @@ public class C64UltimateClient
     }
 
     /// <summary>
+    /// Reads bytes directly from machine memory via GET /v1/machine:readmem.
+    /// </summary>
+    /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
+    /// <param name="address">The machine memory address to read from.</param>
+    /// <param name="length">The number of bytes to read.</param>
+    /// <returns>The bytes returned by the device.</returns>
+    public async Task<byte[]> ReadMemoryAsync(string baseUrl, ushort address, int length)
+    {
+        string hexAddress = address.ToString("X4");
+        var endpoint = BuildEndpointUri(baseUrl, $"v1/machine:readmem?address={hexAddress}&length={length}");
+
+        using var response = await _httpClient.GetAsync(endpoint);
+        byte[] bodyBytes = await response.Content.ReadAsByteArrayAsync();
+        string bodyText = System.Text.Encoding.UTF8.GetString(bodyBytes);
+
+        if (!response.IsSuccessStatusCode)
+            ThrowUltimateRequestException("GET", endpoint, response, bodyText);
+
+        return TryParseReadMemoryJson(bodyText) ?? bodyBytes;
+    }
+
+    /// <summary>
+    /// Writes bytes directly into C64 memory via PUT /v1/machine:writemem.
+    /// </summary>
+    /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
+    /// <param name="address">The C64 memory address to write to.</param>
+    /// <param name="data">The bytes to write.</param>
+    public async Task WriteMemoryAsync(string baseUrl, ushort address, byte[] data)
+    {
+        string hexData = Convert.ToHexString(data);
+        string hexAddress = address.ToString("X4");
+        var endpoint = BuildEndpointUri(baseUrl,
+            $"v1/machine:writemem?address={hexAddress}&data={Uri.EscapeDataString(hexData)}");
+
+        using var response = await _httpClient.PutAsync(endpoint, null);
+        string body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            ThrowUltimateRequestException("PUT", endpoint, response, body, data);
+    }
+
+    /// <summary>
     /// Retrieves the status of all drives via GET /v1/drives.
     /// </summary>
     /// <param name="baseUrl">Base URL of the C64 Ultimate's REST API.</param>
@@ -130,6 +172,7 @@ public class C64UltimateClient
                         Id = drive.Name,
                         Enabled = drive.Value.TryGetProperty("enabled", out var enabled) && enabled.GetBoolean(),
                         Type = drive.Value.TryGetProperty("type", out var type) ? type.GetString() : null,
+                        DeviceNumber = TryGetDriveDeviceNumber(drive.Value),
                         ImageFile = drive.Value.TryGetProperty("image_file", out var imageFile) ? imageFile.GetString() ?? "" : "",
                     });
                 }
@@ -176,6 +219,61 @@ public class C64UltimateClient
     #endregion
 
     #region Private Methods
+
+    private static int? TryGetDriveDeviceNumber(JsonElement drive)
+    {
+        foreach (string propertyName in new[] { "device_number", "device", "unit", "iec_address", "address" })
+        {
+            if (!drive.TryGetProperty(propertyName, out var value))
+                continue;
+
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number))
+                return number;
+
+            if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out number))
+                return number;
+        }
+
+        return null;
+    }
+
+    private static byte[]? TryParseReadMemoryJson(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("data", out var dataElement))
+            {
+                if (dataElement.ValueKind == JsonValueKind.String)
+                    return Convert.FromHexString(dataElement.GetString()!.Replace(" ", "").Replace("-", ""));
+
+                if (dataElement.ValueKind == JsonValueKind.Array)
+                    return dataElement.EnumerateArray().Select(e => (byte)e.GetInt32()).ToArray();
+            }
+        }
+        catch
+        {
+            // If the device returns raw bytes or an unexpected JSON shape, let the caller see the
+            // original bytes instead of failing during diagnostics/probing.
+        }
+
+        return null;
+    }
+
+    private static void ThrowUltimateRequestException(string method, Uri endpoint, HttpResponseMessage response, string body, byte[]? requestBody = null)
+    {
+        string requestDetails = $"{method} {endpoint}";
+        if (requestBody != null)
+        {
+            string hex = BitConverter.ToString(requestBody).Replace("-", " ");
+            requestDetails += $"\nRequest body ({requestBody.Length} bytes): {hex}";
+        }
+
+        throw new HttpRequestException(
+            $"The C64 Ultimate returned {(int)response.StatusCode} {response.ReasonPhrase}.\n\n" +
+            $"Request:\n{requestDetails}\n\n" +
+            $"Response body:\n{body}");
+    }
 
     private static Uri BuildEndpointUri(string baseUrl, string path)
     {

@@ -105,6 +105,21 @@ public class DiskImageTests
         var entry = Assert.Single(disk.ReadDirectory(image));
 
         Assert.Empty(entry.Content);
+        AssertDirectoryEntry(image, geometry, 0, expectedType: 0x82, expectedStartTrack: 1, expectedStartSector: 0, expectedBlocks: 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(BothFormats))]
+    public void AddEntry_WritesDirectoryTypeAndBlockCount(DiskGeometry geometry)
+    {
+        var disk = new DiskImage(geometry);
+        var image = disk.CreateBlankImage("TEST");
+
+        image = disk.AddEntry(image, "SEQFILE", C64UFileKind.Prg, Encoding.ASCII.GetBytes("HELLO"), 0x01);
+        image = disk.AddEntry(image, "USRFILE", C64UFileKind.Prg, [], 0x03);
+
+        AssertDirectoryEntry(image, geometry, 0, expectedType: 0x81, expectedStartTrack: 1, expectedStartSector: 0, expectedBlocks: 1);
+        AssertDirectoryEntry(image, geometry, 1, expectedType: 0x83, expectedStartTrack: 1, expectedStartSector: 1, expectedBlocks: 1);
     }
 
     [Theory]
@@ -354,6 +369,32 @@ public class DiskImageTests
     public void ForKind_NonDiskImageKind_Throws()
     {
         Assert.Throws<InvalidOperationException>(() => DiskImage.ForKind(C64UFileKind.Prg));
+    }
+
+    private static void AssertDirectoryEntry(
+        byte[] image,
+        DiskGeometry geometry,
+        int index,
+        byte expectedType,
+        byte expectedStartTrack,
+        byte expectedStartSector,
+        int expectedBlocks)
+    {
+        int entryOffset = SectorOffset(geometry, geometry.DirectoryTrack, geometry.DirectorySector) + 2 + index * 32;
+        Assert.Equal(expectedType, image[entryOffset]);
+        Assert.Equal(expectedStartTrack, image[entryOffset + 1]);
+        Assert.Equal(expectedStartSector, image[entryOffset + 2]);
+        Assert.Equal(expectedBlocks & 0xFF, image[entryOffset + 28]);
+        Assert.Equal((expectedBlocks >> 8) & 0xFF, image[entryOffset + 29]);
+    }
+
+    private static int SectorOffset(DiskGeometry geometry, int track, int sector)
+    {
+        int sectorsBefore = 0;
+        for (int t = 1; t < track; t++)
+            sectorsBefore += geometry.SectorsPerTrack[t];
+
+        return (sectorsBefore + sector) * 256;
     }
 
     #endregion

@@ -47,6 +47,8 @@ public class MainViewModel : INotifyPropertyChanged
     private C64UDriveStatus? _c64uDriveB;
     private EditorTab? _activeTab;
     private readonly SourcePrinter _printer = new();
+    private readonly HashSet<string> _viceManagedDiskImages = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _viceReleasedDiskImages = new(StringComparer.OrdinalIgnoreCase);
 
     #endregion
 
@@ -930,6 +932,252 @@ public class MainViewModel : INotifyPropertyChanged
             SetStatus($"Transfer failed: {ex.Message}", StatusType.Error);
         }
     }
+
+    /// <summary>
+    /// Scans the project root for manifest files (<c>*._64</c> and <c>*._81</c>), reads each one
+    /// as a file-list to populate a disk image, and writes/updates the image on disk. A manifest
+    /// is one filename per line (blank lines and lines starting with <c>;</c> or <c>#</c> are
+    /// skipped). For each entry, the project root is searched case-insensitively for a matching
+    /// file — if found, it is added (BASIC .bas files are tokenized, .asm files are assembled,
+    /// .prg files are used as-is); if not found, a zero-byte USR entry is added instead.
+    /// </summary>
+    /// <param name="projectRoot">The project folder to scan for manifests and resolve file paths from.</param>
+    /// <returns>True if one or more disk images were created or updated; false if no manifests were found.</returns>
+    public async Task<bool> BuildDiskImagesFromManifestsAsync(string projectRoot)
+    {
+        if (string.IsNullOrWhiteSpace(projectRoot) || !Directory.Exists(projectRoot))
+            return false;
+
+        // Find all manifest files (*._64 and *._81) in the project tree, recursing into
+        // subdirectories so manifests nested alongside their source files are still picked up.
+        var manifestFiles = Directory.GetFiles(projectRoot, "*._64", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(projectRoot, "*._81", SearchOption.AllDirectories))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!manifestFiles.Any())
+            return false;
+
+        bool anyChanged = false;
+        var buildMessages = new List<string>();
+
+        foreach (var manifestPath in manifestFiles)
+        {
+            // Determine target format from the manifest's own extension.
+            var kind = Path.GetExtension(manifestPath).ToLowerInvariant() switch
+            {
+                "._81" => C64UFileKind.D81,
+                _ => C64UFileKind.D64,
+            };
+
+            var disk = DiskImage.ForKind(kind);
+
+            // Read the manifest file list (one filename per line). Some editors can leave NUL
+            // bytes in these small manifest files (for example UTF-16 text read as UTF-8), so
+            // normalize those out before any value is passed to System.IO path APIs.
+            var entries = (await File.ReadAllLinesAsync(manifestPath))
+                .Select(NormalizeManifestLine)
+                .Where(l => !string.IsNullOrEmpty(l) && !l.StartsWith(';') && !l.StartsWith('#'))
+                .ToList();
+
+            if (!entries.Any())
+                continue;
+
+            var projectFiles = Directory.GetFiles(projectRoot, "*", SearchOption.AllDirectories);
+
+            // Start with a blank disk image.
+            byte[] diskBytes = disk.CreateBlankImage(Path.GetFileNameWithoutExtension(manifestPath));
+
+            // Resolve each listed file against the project root.
+            foreach (var entryName in entries)
+            {
+                // Parse optional "|TYPE" suffix (e.g. "helloworld.prg|USR" → type=USR, name="helloworld.prg").
+                // Pipe is used instead of colon because ':' is meaningful in CBM DOS names/text.
+                string? typeSuffix = null;
+                string entryPath = entryName;
+                int typeDelimiterIdx = entryPath.LastIndexOf('|');
+                if (typeDelimiterIdx > 0)
+                {
+                    string potentialType = entryPath[(typeDelimiterIdx + 1)..].Trim();
+                    if (!string.IsNullOrEmpty(potentialType))
+                    {
+                        typeSuffix = potentialType;
+                        entryPath = entryPath[..typeDelimiterIdx].Trim();
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(entryPath))
+                    continue;
+
+                // Case-insensitive search for the file in the project tree. Do not pass the
+                // manifest token as a searchPattern: entries may contain DOS-ish punctuation,
+                // and invalid path chars should simply mean "not found" so a zero-byte entry
+                // can be emitted.
+                string? resolvedPath = ContainsInvalidPathChar(entryPath)
+                    ? null
+                    : projectFiles.FirstOrDefault(f => string.Equals(Path.GetFileName(f), entryPath, StringComparison.OrdinalIgnoreCase));
+
+                // Source-backed entries use conventional CBM-style uppercase names. Missing
+                // entries are often deliberate directory art/comments, so preserve authored case.
+                string diskName = resolvedPath != null
+                    ? Path.GetFileNameWithoutExtension(entryPath).ToUpperInvariant()
+                    : entryPath;
+                if (string.IsNullOrWhiteSpace(diskName))
+                    continue;
+
+                byte[] fileContent = Array.Empty<byte>();
+
+                if (resolvedPath != null && File.Exists(resolvedPath))
+                {
+                    // Use the file's content, converting as needed.
+                    var ext = Path.GetExtension(resolvedPath).ToLowerInvariant();
+                    if (ext == ".bas")
+                    {
+                        var source = await File.ReadAllTextAsync(resolvedPath);
+                        fileContent = new PrgConverter().ConvertToPrg(source);
+                    }
+                    else if (ext is ".asm" or ".s")
+                    {
+                        var source = await File.ReadAllTextAsync(resolvedPath);
+                        var result = new Assembler.Asm6502Assembler().Assemble(source);
+                        fileContent = result.PrgBytes ?? Array.Empty<byte>();
+                    }
+                    else
+                    {
+                        // .prg or any other type — use as-is.
+                        fileContent = await File.ReadAllBytesAsync(resolvedPath);
+                    }
+                }
+                // else: File not found — keep fileContent as empty (zero-byte USR entry).
+
+                // Determine the CBM DOS file type byte from the optional suffix.
+                byte typeByte = typeSuffix?.ToUpperInvariant() switch
+                {
+                    "SEQ" => 0x01,
+                    "USR" => 0x03,
+                    _ => 0x02, // default: PRG
+                };
+
+                diskBytes = disk.AddEntry(diskBytes, diskName, C64UFileKind.Prg, fileContent, typeByte);
+            }
+
+            // Write the updated disk image to the configured generated-image folder, or next to
+            // the manifest if the setting is blank (hw._64 → hw.d64, etc.).
+            var outputDirectory = ResolveGeneratedDiskImageDirectory(projectRoot, manifestPath);
+            Directory.CreateDirectory(outputDirectory);
+            var diskPath = Path.Combine(
+                outputDirectory,
+                Path.ChangeExtension(Path.GetFileName(manifestPath), kind == C64UFileKind.D81 ? ".d81" : ".d64"));
+            int? releasedViceDriveType = File.Exists(diskPath)
+                ? await TryReleaseViceDriveForDiskImageAsync(diskPath)
+                : null;
+            try
+            {
+                await File.WriteAllBytesAsync(diskPath, diskBytes);
+            }
+            finally
+            {
+                await TryRestoreViceDrive8TypeAsync(releasedViceDriveType);
+            }
+            buildMessages.Add($"{Path.GetFileName(diskPath)} ({entries.Count} entries)");
+            anyChanged = true;
+        }
+
+        if (anyChanged)
+        {
+            _buildStatusMessage = $"Disk images built: {string.Join(", ", buildMessages)}";
+        }
+
+        return anyChanged;
+    }
+
+    /// <summary>
+    /// Gets the status message from the most recent manifest build, or null if no build has run.
+    /// </summary>
+    public string? BuildStatusMessage => _buildStatusMessage;
+    private string? _buildStatusMessage;
+
+    /// <summary>
+    /// Records that READYCode explicitly loaded or ran this disk image in VICE. The next manifest
+    /// rebuild for that image may briefly release drive 8 so the file can be overwritten; after
+    /// that first release, saves leave VICE alone until the image is explicitly loaded/run again.
+    /// </summary>
+    public void MarkDiskImageLoadedInVice(string diskPath)
+    {
+        string fullPath = Path.GetFullPath(diskPath);
+        _viceManagedDiskImages.Add(fullPath);
+        _viceReleasedDiskImages.Remove(fullPath);
+    }
+
+    // Cleans a manifest line before it is interpreted as a disk entry/path token.
+    private static string NormalizeManifestLine(string line)
+    {
+        // Manifest entries are text. Drop embedded control characters so a manifest that was
+        // accidentally saved with NUL/control bytes does not turn those bytes into bogus disk
+        // filenames like "??" or pass them into System.IO path APIs.
+        var chars = line.Where(c => !char.IsControl(c) || c == '\t').ToArray();
+        return new string(chars).Trim();
+    }
+
+    // Resolves the configured generated-image output folder, falling back beside the manifest
+    // when the setting is blank.
+    private string ResolveGeneratedDiskImageDirectory(string projectRoot, string manifestPath)
+    {
+        string configured = Settings.GeneratedDiskImageDirectory.Trim();
+        if (string.IsNullOrEmpty(configured))
+            return Path.GetDirectoryName(manifestPath) ?? projectRoot;
+
+        return Path.IsPathRooted(configured)
+            ? configured
+            : Path.Combine(projectRoot, configured);
+    }
+
+    // If READYCode previously loaded this generated image in VICE, temporarily disables drive 8
+    // so the image file can be overwritten during manifest rebuild.
+    private async Task<int?> TryReleaseViceDriveForDiskImageAsync(string diskPath)
+    {
+        string fullPath = Path.GetFullPath(diskPath);
+        if (!_viceManagedDiskImages.Contains(fullPath) || _viceReleasedDiskImages.Contains(fullPath))
+            return null;
+
+        try
+        {
+            var vice = new ViceClient(Settings.ViceMonitorHost, Settings.ViceMonitorPort);
+            int? releasedDriveType = await vice.ReleaseDrive8IfMatchesAsync(fullPath);
+            if (releasedDriveType.HasValue)
+                _viceReleasedDiskImages.Add(fullPath);
+            return releasedDriveType;
+        }
+        catch
+        {
+            // Releasing a VICE-held image is best-effort only. If the file is still locked,
+            // File.WriteAllBytesAsync below will surface the real write failure.
+            return null;
+        }
+    }
+
+    // Restores VICE drive 8 to the type captured while releasing a generated disk image.
+    private async Task TryRestoreViceDrive8TypeAsync(int? driveType)
+    {
+        if (!driveType.HasValue)
+            return;
+
+        try
+        {
+            var vice = new ViceClient(Settings.ViceMonitorHost, Settings.ViceMonitorPort);
+            await vice.RestoreDrive8TypeAsync(driveType.Value);
+        }
+        catch
+        {
+            // Best-effort restore only; VICE may have been closed while the image was writing.
+        }
+    }
+
+    // Returns true when a manifest token contains characters that cannot safely be used in a
+    // local filesystem lookup. Such entries are still valid CBM DOS names and become empty files.
+    private static bool ContainsInvalidPathChar(string value) =>
+        value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+        value.IndexOfAny(Path.GetInvalidPathChars()) >= 0;
 
     #endregion
 

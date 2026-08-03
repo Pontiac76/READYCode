@@ -198,6 +198,26 @@
             <MenuItem Header="Add File..." Click="LocalDiskImageContextAddFile_Click"/>
             <MenuItem Header="Open as Hex" Click="FileContextOpenAsHex_Click"/>
             <Separator/>
+            <MenuItem Header="VICE">
+                <MenuItem Header="Mount Disk" Click="LocalDiskImageContextViceMount_Click"/>
+                <MenuItem Header="Load Disk" Click="LocalDiskImageContextViceLoad_Click"/>
+                <MenuItem Header="Run Disk" Click="LocalDiskImageContextViceRun_Click"/>
+            </MenuItem>
+            <MenuItem Header="Ultimate">
+                <MenuItem Header="Drive A">
+                    <MenuItem Header="Mount Disk" Click="LocalDiskImageContextUltimateMountA_Click"/>
+                    <MenuItem Header="Mount and Reset" Click="LocalDiskImageContextUltimateMountResetA_Click"/>
+                    <MenuItem Header="Load Disk" Click="LocalDiskImageContextUltimateLoadA_Click"/>
+                    <MenuItem Header="Run Disk" Click="LocalDiskImageContextUltimateRunA_Click"/>
+                </MenuItem>
+                <MenuItem Header="Drive B">
+                    <MenuItem Header="Mount Disk" Click="LocalDiskImageContextUltimateMountB_Click"/>
+                    <MenuItem Header="Mount and Reset" Click="LocalDiskImageContextUltimateMountResetB_Click"/>
+                    <MenuItem Header="Load Disk" Click="LocalDiskImageContextUltimateLoadB_Click"/>
+                    <MenuItem Header="Run Disk" Click="LocalDiskImageContextUltimateRunB_Click"/>
+                </MenuItem>
+            </MenuItem>
+            <Separator/>
             <MenuItem Header="Reveal in File Explorer" Click="FileContextReveal_Click"/>
             <Separator/>
             <MenuItem Header="Cut"   InputGestureText="Ctrl+X" Click="FileContextCut_Click"/>

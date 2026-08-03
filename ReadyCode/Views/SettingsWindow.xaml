@@ -346,6 +346,9 @@
                         <TreeViewItem Header="Minify"
                                       Tag="code-minify"
                                       x:Name="TreeMinify"/>
+                        <TreeViewItem Header="Disk Images"
+                                      Tag="code-disk-images"
+                                      x:Name="TreeDiskImages"/>
                     </TreeViewItem>
                     <TreeViewItem Header="Commodore"
                                   Tag="c64u"
@@ -568,6 +571,38 @@
                                                   FontSize="12"
                                                   IsChecked="{Binding MinifyRenumberLines}"/>
                                     </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                        </StackPanel>
+
+                        <!-- CODE › DISK IMAGES -->
+                        <StackPanel x:Name="PanelDiskImages"
+                                    Margin="24,20,24,20"
+                                    Visibility="Collapsed">
+
+                            <TextBlock Style="{StaticResource SectionBreadcrumb}"
+                                       Text="Code  ›  Disk Images"/>
+
+                            <Border Style="{StaticResource SettingRowLast}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SettingLabel}"
+                                               Text="Generated disk image directory"/>
+                                    <TextBlock Style="{StaticResource SettingDesc}"
+                                               Text="Project-relative or absolute folder where manifest-generated .d64/.d81 files are written. Leave blank to write next to each manifest."/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox Grid.Column="0"
+                                                 VerticalContentAlignment="Center"
+                                                 Text="{Binding GeneratedDiskImageDirectory, UpdateSourceTrigger=PropertyChanged}"/>
+                                        <Button Grid.Column="1"
+                                                Margin="8,0,0,0"
+                                                Content="Browse..."
+                                                Click="GeneratedDiskImageDirectoryBrowse_Click"/>
+                                    </Grid>
                                 </StackPanel>
                             </Border>
 
